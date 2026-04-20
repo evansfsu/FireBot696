@@ -1,0 +1,32 @@
+# ROS 2 / colcon
+firebot_ws/build/
+firebot_ws/install/
+firebot_ws/log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# YOLO model weights / datasets -- keep out of git
+models/*.pt
+models/*.onnx
+models/*.engine
+runs/
+
+# Editor / OS scratch
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# KiCad autosave / backups
+*-backups/
+*.kicad_pcb-bak
+*.kicad_sch-bak
+fp-info-cache
+
+# Stray experimental folder -- not part of the published project
+FireBot697/

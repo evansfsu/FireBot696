@@ -1,0 +1,9 @@
+bool detected
+float32 confidence
+float32 bbox_x
+float32 bbox_y
+float32 bbox_w
+float32 bbox_h
+float32 bbox_area
+float32 x_offset
+string label

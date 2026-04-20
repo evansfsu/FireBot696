@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "Raspberry Pi 5")(type "KiCad")(uri "/Users/heeloats/Documents/KiCad/Raspberry_Pi_5/CM5IO.kicad_sym")(options "")(descr ""))
+)

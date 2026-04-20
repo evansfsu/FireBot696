@@ -1,0 +1,409 @@
+"""Brain node: 7-state FireBot696 supervisor.
+
+States: IDLE, SEARCHING, AWAITING_CONFIRM, APPROACHING, WARNING,
+        EXTINGUISHING, COMPLETE.
+
+Drive output is a `geometry_msgs/Twist` published to `/cmd/drive`. Because
+the PCB is wired for skid-steer (see docs/WIRING.md), we only populate
+`linear.x` and `angular.z`; the bridge node forwards vy=0 to the Mega.
+
+Approach gating is pluggable via the `approach_strategy` parameter:
+  * yolo_only              (default)
+  * yolo_ultrasonic        bbox + HC-SR04 within approach_distance_cm
+  * yolo_ultrasonic_ir     above plus KY-032 object detected
+"""
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Bool, Int32, String
+from geometry_msgs.msg import Twist
+
+from firebot_interfaces.msg import FireDetection
+
+
+class State:
+    IDLE = 'IDLE'
+    SEARCHING = 'SEARCHING'
+    AWAITING_CONFIRM = 'AWAITING_CONFIRM'
+    APPROACHING = 'APPROACHING'
+    WARNING = 'WARNING'
+    EXTINGUISHING = 'EXTINGUISHING'
+    COMPLETE = 'COMPLETE'
+
+
+VALID_STRATEGIES = ('yolo_only', 'yolo_ultrasonic', 'yolo_ultrasonic_ir')
+
+
+class BrainNode(Node):
+    def __init__(self):
+        super().__init__('brain_node')
+
+        self.declare_parameter('confidence_threshold', 0.5)
+        self.declare_parameter('stable_frames', 5)
+        self.declare_parameter('center_offset_thresh', 0.08)
+        self.declare_parameter('approach_bbox_thresh', 0.25)
+        self.declare_parameter('v_approach', 60.0)
+        self.declare_parameter('kp_yaw', 90.0)
+        self.declare_parameter('rotate_speed', 55.0)
+        self.declare_parameter('search_timeout_sec', 30.0)
+        self.declare_parameter('confirm_timeout_sec', 30.0)
+        self.declare_parameter('warning_seconds', 5)
+        self.declare_parameter('discharge_seconds', 8.0)
+        self.declare_parameter('complete_hold_sec', 3.0)
+
+        self.declare_parameter('approach_strategy', 'yolo_only')
+        self.declare_parameter('approach_distance_cm', 50)
+        self.declare_parameter('safety_stop_cm', 20)
+        self.declare_parameter('alarm_from_audio', False)
+        self.declare_parameter('mic_alarm_threshold', 600)
+        self.declare_parameter('mic_hold_ms', 500)
+
+        self.declare_parameter('approach_pulse_ms', 400)
+        self.declare_parameter('approach_rest_ms', 600)
+        self.declare_parameter('approach_max_sec', 20.0)
+
+        self.conf_thresh = float(self.get_parameter('confidence_threshold').value)
+        self.stable_frames = int(self.get_parameter('stable_frames').value)
+        self.center_tol = float(self.get_parameter('center_offset_thresh').value)
+        self.bbox_thresh = float(self.get_parameter('approach_bbox_thresh').value)
+        self.v_approach = float(self.get_parameter('v_approach').value)
+        self.kp_yaw = float(self.get_parameter('kp_yaw').value)
+        self.rot_speed = float(self.get_parameter('rotate_speed').value)
+        self.search_timeout = float(self.get_parameter('search_timeout_sec').value)
+        self.confirm_timeout = float(self.get_parameter('confirm_timeout_sec').value)
+        self.warning_secs = int(self.get_parameter('warning_seconds').value)
+        self.discharge_secs = float(self.get_parameter('discharge_seconds').value)
+        self.complete_hold = float(self.get_parameter('complete_hold_sec').value)
+
+        strat = str(self.get_parameter('approach_strategy').value)
+        if strat not in VALID_STRATEGIES:
+            self.get_logger().warn(
+                f'unknown approach_strategy {strat!r}; falling back to yolo_only'
+            )
+            strat = 'yolo_only'
+        self.approach_strategy = strat
+        self.approach_dist_cm = int(self.get_parameter('approach_distance_cm').value)
+        self.safety_stop_cm = int(self.get_parameter('safety_stop_cm').value)
+        self.alarm_from_audio = bool(self.get_parameter('alarm_from_audio').value)
+        self.mic_alarm_thresh = int(self.get_parameter('mic_alarm_threshold').value)
+        self.mic_hold_ms = int(self.get_parameter('mic_hold_ms').value)
+
+        self.approach_pulse_ms = int(self.get_parameter('approach_pulse_ms').value)
+        self.approach_rest_ms = int(self.get_parameter('approach_rest_ms').value)
+        self.approach_max_sec = float(self.get_parameter('approach_max_sec').value)
+
+        self.drive_pub = self.create_publisher(Twist, '/cmd/drive', 10)
+        self.ext_pub = self.create_publisher(Int32, '/cmd/extinguisher', 10)
+        self.warn_pub = self.create_publisher(Int32, '/cmd/warning', 10)
+        self.state_pub = self.create_publisher(String, '/firebot/state', 10)
+        self.countdown_pub = self.create_publisher(Int32, '/firebot/countdown', 10)
+
+        self.create_subscription(FireDetection, '/fire/detection', self._on_detection, 10)
+        self.create_subscription(Bool, '/alarm/trigger', self._on_alarm, 10)
+        self.create_subscription(Bool, '/ui/confirm', self._on_confirm, 10)
+        self.create_subscription(String, '/ui/state_override', self._on_state_override, 10)
+        self.create_subscription(Int32, '/sensors/ultrasonic', self._on_ultrasonic, 10)
+        self.create_subscription(Bool, '/sensors/ir', self._on_ir, 10)
+        self.create_subscription(Int32, '/sensors/audio', self._on_audio, 10)
+
+        self.state = State.IDLE
+        self.state_enter = self.get_clock().now()
+        self.latest_det = FireDetection()
+        self.centered_streak = 0
+        self.alarm_latched = False
+        self.confirm_latched = None  # True = confirm, False = deny, None = no input
+        self.us_cm = -1
+        self.ir_triggered = False
+        self.mic_level = -1
+        self.mic_over_since_ns = None
+        self.last_countdown = -1
+        self.approach_pulse_edge_ns = 0
+        self.approach_pulse_driving = False
+
+        self.create_timer(0.1, self._tick)
+        self.get_logger().info(
+            f'brain_node up (strategy={self.approach_strategy}, '
+            f'alarm_from_audio={self.alarm_from_audio})'
+        )
+
+    def _on_detection(self, msg: FireDetection):
+        self.latest_det = msg
+
+    def _on_alarm(self, msg: Bool):
+        if msg.data:
+            self.alarm_latched = True
+            self.get_logger().warn('alarm latched')
+
+    def _on_confirm(self, msg: Bool):
+        self.confirm_latched = bool(msg.data)
+
+    def _on_state_override(self, msg: String):
+        target = msg.data.strip().upper()
+        if target in vars(State).values():
+            self.get_logger().warn(f'state override -> {target}')
+            self._set_state(target)
+
+    def _on_ultrasonic(self, msg: Int32):
+        self.us_cm = int(msg.data)
+
+    def _on_ir(self, msg: Bool):
+        self.ir_triggered = bool(msg.data)
+
+    def _on_audio(self, msg: Int32):
+        self.mic_level = int(msg.data)
+        if not self.alarm_from_audio:
+            self.mic_over_since_ns = None
+            return
+        now = self.get_clock().now().nanoseconds
+        if self.mic_level >= self.mic_alarm_thresh:
+            if self.mic_over_since_ns is None:
+                self.mic_over_since_ns = now
+            elif (now - self.mic_over_since_ns) / 1e6 >= self.mic_hold_ms:
+                if not self.alarm_latched:
+                    self.alarm_latched = True
+                    self.get_logger().warn('alarm auto-latched from audio envelope')
+        else:
+            self.mic_over_since_ns = None
+
+    def _set_state(self, new_state: str):
+        if new_state == self.state:
+            return
+        self.get_logger().info(f'state: {self.state} -> {new_state}')
+        self.state = new_state
+        self.state_enter = self.get_clock().now()
+        self.centered_streak = 0
+        self.last_countdown = -1
+        self.approach_pulse_edge_ns = 0
+        self.approach_pulse_driving = False
+        if new_state == State.IDLE:
+            self._reset_transient()
+
+    def _reset_transient(self):
+        self.alarm_latched = False
+        self.confirm_latched = None
+        self.centered_streak = 0
+
+    def _time_in_state(self) -> float:
+        return (self.get_clock().now() - self.state_enter).nanoseconds / 1e9
+
+    def _drive(self, linear_x: float = 0.0, angular_z: float = 0.0):
+        t = Twist()
+        t.linear.x = float(linear_x)
+        t.angular.z = float(angular_z)
+        self.drive_pub.publish(t)
+
+    def _stop(self):
+        self._drive(0.0, 0.0)
+
+    def _send_ext(self, phase: int):
+        msg = Int32()
+        msg.data = int(phase)
+        self.ext_pub.publish(msg)
+
+    def _send_warn(self, mode: int):
+        msg = Int32()
+        msg.data = int(mode)
+        self.warn_pub.publish(msg)
+
+    def _detection_is_fire(self) -> bool:
+        det = self.latest_det
+        return bool(det.detected) and float(det.confidence) >= self.conf_thresh
+
+    def _centered_enough(self) -> bool:
+        return abs(float(self.latest_det.x_offset)) <= self.center_tol
+
+    def _approach_gate_satisfied(self) -> bool:
+        det = self.latest_det
+        if not self._detection_is_fire():
+            return False
+        if float(det.bbox_area) < self.bbox_thresh:
+            return False
+        if self.approach_strategy == 'yolo_only':
+            return True
+        if self.us_cm < 0:
+            return False  # sensor required but reported disabled
+        if self.us_cm > self.approach_dist_cm:
+            return False
+        if self.approach_strategy == 'yolo_ultrasonic':
+            return True
+        return bool(self.ir_triggered)
+
+    def _tick(self):
+        state_msg = String()
+        state_msg.data = self.state
+        self.state_pub.publish(state_msg)
+
+        handler = {
+            State.IDLE: self._tick_idle,
+            State.SEARCHING: self._tick_searching,
+            State.AWAITING_CONFIRM: self._tick_await_confirm,
+            State.APPROACHING: self._tick_approaching,
+            State.WARNING: self._tick_warning,
+            State.EXTINGUISHING: self._tick_extinguishing,
+            State.COMPLETE: self._tick_complete,
+        }.get(self.state)
+        if handler:
+            handler()
+
+    def _tick_idle(self):
+        self._stop()
+        if self.alarm_latched or self._detection_is_fire():
+            self._set_state(State.SEARCHING)
+
+    def _tick_searching(self):
+        if self._time_in_state() > self.search_timeout:
+            self.get_logger().info('search timeout; back to IDLE')
+            self._stop()
+            self._reset_transient()
+            self._set_state(State.IDLE)
+            return
+
+        det = self.latest_det
+        if not self._detection_is_fire():
+            self.centered_streak = 0
+            self._drive(angular_z=self.rot_speed)
+            return
+
+        offset = float(det.x_offset)
+        if abs(offset) <= self.center_tol:
+            self.centered_streak += 1
+            self._stop()
+            if self.centered_streak >= self.stable_frames:
+                self._set_state(State.AWAITING_CONFIRM)
+            return
+
+        self.centered_streak = 0
+        direction = -1.0 if offset > 0 else 1.0
+        self._drive(angular_z=direction * self.rot_speed)
+
+    def _tick_await_confirm(self):
+        self._stop()
+        if self.confirm_latched is True:
+            self.confirm_latched = None
+            self._set_state(State.APPROACHING)
+            return
+        if self.confirm_latched is False:
+            self.get_logger().warn('user denied; back to IDLE')
+            self._set_state(State.IDLE)
+            return
+        if self._time_in_state() > self.confirm_timeout:
+            self.get_logger().info('confirm timeout; back to IDLE')
+            self._set_state(State.IDLE)
+
+    def _tick_approaching(self):
+        # Bail out on lost detection.
+        if not self._detection_is_fire():
+            self.get_logger().info('detection lost in APPROACHING; back to SEARCHING')
+            self._stop()
+            self._set_state(State.SEARCHING)
+            return
+
+        # Hard timeout so we never drive indefinitely. This protects the robot
+        # in indoor spaces if the bbox-area gate never quite triggers (e.g.
+        # dim target, odd angle, partial occlusion).
+        if self._time_in_state() > self.approach_max_sec:
+            self.get_logger().warn(
+                f'approach_max_sec ({self.approach_max_sec:.0f}s) exceeded; '
+                'stopping and proceeding to WARNING'
+            )
+            self._stop()
+            self._set_state(State.WARNING)
+            return
+
+        # Ultrasonic-based wall guard (only when ultrasonic is in the strategy).
+        if self.approach_strategy in ('yolo_ultrasonic', 'yolo_ultrasonic_ir'):
+            if 0 <= self.us_cm <= self.safety_stop_cm:
+                self.get_logger().warn(
+                    f'safety stop ({self.us_cm} cm <= {self.safety_stop_cm}); '
+                    'holding position'
+                )
+                self._stop()
+                if self._approach_gate_satisfied():
+                    self._set_state(State.WARNING)
+                return
+
+        # Gate reached -> transition to WARNING.
+        if self._approach_gate_satisfied():
+            self._stop()
+            self._set_state(State.WARNING)
+            return
+
+        # Pulsed short-burst drive for indoor safety. Drive forward for
+        # approach_pulse_ms, coast for approach_rest_ms, repeat. Yaw correction
+        # piggybacks on the drive pulse so the robot still re-centers while
+        # making progress.
+        now_ns = self.get_clock().now().nanoseconds
+        if self.approach_pulse_edge_ns == 0:
+            self.approach_pulse_edge_ns = now_ns
+            self.approach_pulse_driving = True
+            self.get_logger().info('approach pulse: drive')
+        since_edge_ms = (now_ns - self.approach_pulse_edge_ns) / 1e6
+
+        if self.approach_pulse_driving and since_edge_ms >= self.approach_pulse_ms:
+            self.approach_pulse_driving = False
+            self.approach_pulse_edge_ns = now_ns
+            self._stop()
+            self.get_logger().debug('approach pulse: rest')
+            return
+        if (not self.approach_pulse_driving) and since_edge_ms >= self.approach_rest_ms:
+            self.approach_pulse_driving = True
+            self.approach_pulse_edge_ns = now_ns
+            self.get_logger().debug('approach pulse: drive')
+
+        if self.approach_pulse_driving:
+            offset = float(self.latest_det.x_offset)
+            angular_z = -self.kp_yaw * offset
+            self._drive(linear_x=self.v_approach, angular_z=angular_z)
+        else:
+            self._stop()
+
+    def _tick_warning(self):
+        self._stop()
+        self._send_warn(1)
+        elapsed = int(self._time_in_state())
+        remaining = max(0, self.warning_secs - elapsed)
+        if remaining != self.last_countdown:
+            self.last_countdown = remaining
+            msg = Int32()
+            msg.data = remaining
+            self.countdown_pub.publish(msg)
+            self.get_logger().warn(f'warning countdown: {remaining}s')
+        if elapsed >= self.warning_secs:
+            self._send_warn(0)
+            self._set_state(State.EXTINGUISHING)
+
+    def _tick_extinguishing(self):
+        elapsed = self._time_in_state()
+        pin_pull_dur = 1.5
+        if elapsed < pin_pull_dur:
+            self._send_ext(1)
+        elif elapsed < pin_pull_dur + self.discharge_secs:
+            self._send_ext(2)
+        elif elapsed < pin_pull_dur + self.discharge_secs + 3.0:
+            self._send_ext(3)
+        else:
+            self._send_ext(4)
+            self._set_state(State.COMPLETE)
+
+    def _tick_complete(self):
+        self._stop()
+        self._send_ext(0)
+        self._send_warn(0)
+        if self._time_in_state() >= self.complete_hold:
+            self._set_state(State.IDLE)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = BrainNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
