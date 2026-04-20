@@ -50,9 +50,12 @@ Optional but helpful:
 Pick a folder on your machine and run:
 
 ```bash
-git clone https://github.com/<ORG>/FireBot696.git
+git clone https://github.com/evansfsu/FireBot696.git
 cd FireBot696
 ```
+
+(Or click **Code -> Open with GitHub Desktop** on the repo page if you
+prefer a GUI.)
 
 Every path in this document is relative to that top-level
 `FireBot696/` folder.
