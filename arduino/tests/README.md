@@ -1,50 +1,48 @@
 # Arduino test sketches
 
-Self-contained sketches for bench-testing one subsystem at a time. They
-all use the exact `Fire_Bot.net` pin map, so they work with the robot
-wired as-is.
+Self-contained single-subsystem sketches. All use the `Fire_Bot.net`
+pin map, so they work on the robot as wired.
 
-## Recommended focused tests
+## Focused tests
 
-| Sketch | What it tests | Typical use |
-|---|---|---|
-| [drive_test/drive_test.ino](drive_test/drive_test.ino) | 4 motors via 2 DFR0601 drivers, skid-steer spin | "Do the wheels turn the right way?" |
-| [extinguisher_test/extinguisher_test.ino](extinguisher_test/extinguisher_test.ino) | Solenoid pin-puller + A4988 lead-screw stepper | "Does the extinguisher mechanism discharge?" |
+| Sketch | Tests |
+|---|---|
+| [drive_test/drive_test.ino](drive_test/drive_test.ino) | 4 motors via 2 DFR0601 drivers, skid-steer spin |
+| [extinguisher_test/extinguisher_test.ino](extinguisher_test/extinguisher_test.ino) | Solenoid + A4988 lead-screw |
 
-Both expose a short menu on the Serial Monitor (115200 baud, line
-ending = Newline). Type `?` after flashing to see every command.
+Serial Monitor at 115200 / Newline. Type `?` for the menu.
 
-### drive_test quick reference
+### drive_test
 
 ```text
-f 120        # forward at PWM 120
-b 120        # backward
-l 100        # spin LEFT in place
-r 100        # spin RIGHT in place
-s            # stop
-spin         # 2.5 s left, pause, 2.5 s right, stop
-demo         # short forward/back/spin left/spin right cycle
-speed 80     # change default pwm
+f 120        forward
+b 120        backward
+l 100        spin left
+r 100        spin right
+s            stop
+spin         2.5 s left, pause, 2.5 s right, stop
+demo         short fwd/back + full L/R spin
+speed 80     change default PWM
 ```
 
-### extinguisher_test quick reference
+### extinguisher_test
 
 ```text
-pin on       # solenoid energize (pin pulled)
-pin off      # release
-pulse 1500   # pin on for 1500 ms then off
-advance      # lead-screw forward 6 s (auto-stops)
-retract      # lead-screw reverse 6 s (auto-stops)
-stop         # halt the stepper now
-seq          # full discharge: pin -> advance -> retract
-abort        # cancel a running sequence
+pin on       solenoid energize
+pin off      release
+pulse 1500   pin on for 1500 ms then off
+advance      lead-screw forward 6 s (auto-stops)
+retract      lead-screw reverse 6 s (auto-stops)
+stop         halt the stepper now
+seq          full discharge: pin -> advance -> retract
+abort        cancel seq mid-run
 ```
 
-## Legacy reference sketches
+## Legacy sketches
 
-These were the original bring-up demos. They are kept for reference but
-use ad-hoc pin numbers, not the wired schematic -- **do not flash them
-onto the robot without double-checking pins first.**
+Original bring-up demos. Kept for reference. **They use ad-hoc pin
+numbers, not the wired schematic -- don't flash them without checking
+pins first.**
 
 - `A4988_Motor_Driver_Test/`
 - `FIT0186_DFR0601_Motor_Driver_Test/`
@@ -52,10 +50,9 @@ onto the robot without double-checking pins first.**
 - `Solenoid/`
 - `motor_test/`
 
-## For the full system
+## Full system
 
-For the actual robot (ROS2 + Pi + Mega), flash
+For the real robot (ROS2 + Pi + Mega), flash
 [`arduino/firebot_mega/firebot_mega.ino`](../firebot_mega/firebot_mega.ino).
-That sketch merges all of the above behaviors with the human-command
-Serial Monitor interface described in
-[`docs/ARDUINO_TESTING.md`](../../docs/ARDUINO_TESTING.md).
+It merges every behavior above with the Serial Monitor command set
+described in [`docs/ARDUINO_TESTING.md`](../../docs/ARDUINO_TESTING.md).

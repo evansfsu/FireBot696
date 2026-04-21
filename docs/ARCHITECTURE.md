@@ -1,10 +1,9 @@
-# FireBot696 Architecture
+# Architecture
 
-Three Python nodes + one Arduino firmware + one CLI. That is the whole system.
+Three Python nodes, one Arduino firmware, one CLI.
 
-> For a step-by-step walkthrough of how these pieces behave on a live fire
-> run (boot -> alarm -> approach -> extinguish), see
-> [INTEGRATION.md](INTEGRATION.md).
+For the runtime walkthrough (boot -> alarm -> approach -> extinguish),
+see [INTEGRATION.md](INTEGRATION.md).
 
 ## Nodes and topics
 
@@ -33,14 +32,12 @@ flowchart LR
     bridge -->|/sensors/encoders| debug["(any listener)"]
 ```
 
-Node responsibilities:
-
-| Node | Job | Uses hardware |
+| Node | Job | Hardware |
 |---|---|---|
-| [vision_node](../firebot_ws/src/firebot/firebot/vision_node.py) | camera capture + YOLO, publishes `/fire/detection` | Pi camera (ov5647) |
-| [brain_node](../firebot_ws/src/firebot/firebot/brain_node.py) | 7-state supervisor, publishes drive / extinguisher / warning commands | none |
-| [arduino_bridge_node](../firebot_ws/src/firebot/firebot/arduino_bridge_node.py) | serial to the Mega, fan-out to `/sensors/*` | `/dev/ttyACM0` |
-| [firebot CLI](../firebot_ws/src/firebot/firebot/firebot_cli.py) | one-shot publishers for operator actions | none |
+| [vision_node](../firebot_ws/src/firebot/firebot/vision_node.py) | camera + YOLO, publishes `/fire/detection` | ov5647 |
+| [brain_node](../firebot_ws/src/firebot/firebot/brain_node.py) | 7-state supervisor, publishes drive / extinguisher / warning | none |
+| [arduino_bridge_node](../firebot_ws/src/firebot/firebot/arduino_bridge_node.py) | serial to Mega, fans out to `/sensors/*` | `/dev/ttyACM0` |
+| [firebot CLI](../firebot_ws/src/firebot/firebot/firebot_cli.py) | one-shot publishers for operator inputs | none |
 
 ## State machine
 
@@ -59,27 +56,27 @@ stateDiagram-v2
     COMPLETE --> IDLE: hold elapsed
 ```
 
-Approach gate depends on the `approach_strategy` parameter:
+Approach gate by `approach_strategy`:
 
-- `yolo_only`: bbox area >= threshold
-- `yolo_ultrasonic`: `yolo_only` AND HC-SR04 distance <= `approach_distance_cm`
-- `yolo_ultrasonic_ir`: above AND KY-032 reports object
+- `yolo_only` -- bbox area >= threshold.
+- `yolo_ultrasonic` -- above AND HC-SR04 <= `approach_distance_cm`.
+- `yolo_ultrasonic_ir` -- above AND KY-032 reports object.
 
-Within `APPROACHING`, a safety stop triggers whenever the ultrasonic reading
-is at or below `safety_stop_cm` regardless of whether the approach gate is
-satisfied yet.
+`safety_stop_cm` preempts approach any time the ultrasonic reads at or
+below it, regardless of the gate.
 
 ## Parameters
 
-All tunables live in [config/firebot_params.yaml](../firebot_ws/src/firebot/config/firebot_params.yaml).
-Strategy and sensor enables can be flipped without touching code; the bridge
-node forwards `C,US|IR|MIC,0|1` to the Mega at startup based on the `enable_*`
-flags, and the brain node reads `approach_strategy` there.
+All tunables in
+[config/firebot_params.yaml](../firebot_ws/src/firebot/config/firebot_params.yaml).
+The bridge forwards `C,US|IR|MIC,0|1` at startup based on `enable_*`;
+the brain reads `approach_strategy`. Change strategy without touching
+code.
 
-## Why three nodes (not more)
+## Why three nodes
 
-Vision is CPU-heavy and should not share a process with the state machine.
-The Mega owns every hard-realtime concern (PWM, step generation, solenoid
-timing), so the Pi never needs a dedicated motor node or extinguisher node;
-the bridge is a thin serial translator instead. The CLI is a console script,
-not a long-running node, because operator inputs are infrequent.
+Vision is CPU-heavy and shouldn't share a process with the state
+machine. The Mega owns every hard-realtime concern (PWM, step pulses,
+solenoid timing), so the Pi doesn't need a motor node or extinguisher
+node -- the bridge is a thin serial translator. The CLI is a console
+script because operator inputs are infrequent.

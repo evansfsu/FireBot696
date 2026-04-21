@@ -1,28 +1,27 @@
 # Pi <-> Mega serial protocol
 
-- Transport: USB-CDC on the Mega's native serial pins (D0/D1), 115200 baud,
-  ASCII, `\n` terminated.
-- Flow: bridge node sends commands as they arrive from ROS topics, plus an
-  `S` status request on a periodic timer. The Mega never initiates messages
-  except for `L,<log>` boot/error lines.
+USB-CDC on the Mega's native serial (D0/D1), 115200 baud, ASCII, `\n`
+terminated. The bridge sends commands as they arrive from ROS topics
+plus an `S` status request on a timer. The Mega only initiates
+messages for `L,<log>` lines (boot, estop, errors).
 
 ## Pi -> Mega
 
-| Command | Arguments | Meaning |
+| Command | Args | Meaning |
 |---|---|---|
-| `M,vx,vy,wz` | three ints, each -255..255 | drive. `vy` is ignored (PCB is skid-steer). Mega does `left = vx + wz`, `right = vx - wz`. |
-| `E,phase` | 0..4 | extinguisher phase. `0` off, `1` pin-pull (solenoid), `2` advance lead-screw, `3` retract lead-screw, `4` stop stepper. |
-| `W,mode` | 0..2 | warning mode. `0` off, `1` steady, `2` countdown-beep. No physical output yet (no buzzer wired). |
-| `S` | (none) | request status reply. |
-| `R` | (none) | e-stop: all outputs LOW, stepper disabled, firmware enters `ESTOP`. |
-| `C,<US\|IR\|MIC>,<0\|1>` | sensor + enable | enable/disable an optional sensor. Disabled sensors report `-1` in the status reply. |
+| `M,vx,vy,wz` | ints -255..255 | drive. `vy` ignored (skid-steer). Mega computes `left = vx + wz`, `right = vx - wz`. |
+| `E,phase` | 0..4 | extinguisher: `0` off, `1` pin-pull, `2` advance, `3` retract, `4` stop stepper. |
+| `W,mode` | 0..2 | warning: `0` off, `1` steady, `2` countdown. No physical output yet (no buzzer). |
+| `S` | -- | request status reply. |
+| `R` | -- | e-stop. All outputs LOW, firmware -> `ESTOP`. |
+| `C,<US\|IR\|MIC>,<0\|1>` | sensor + enable | turn an optional sensor on or off. Disabled sensors report `-1`. |
 
 ## Mega -> Pi
 
 | Line | Fields | Meaning |
 |---|---|---|
-| `D,encA,encB,us,ir,mic,state` | all ints; sensors are `-1` when disabled; `state` is the firmware FSM enum (0=IDLE, 1=DRIVING, 2=EXTINGUISHING, 3=ESTOP) | status reply to `S`. |
-| `L,<message>` | free-text ASCII | firmware log line (boot banner, estop ack, `W` acknowledgement, etc.). |
+| `D,encA,encB,us,ir,mic,state` | ints; sensors `-1` when off; `state` is firmware FSM (0=IDLE, 1=DRIVING, 2=EXTINGUISHING, 3=ESTOP) | reply to `S`. |
+| `L,<message>` | free text | firmware log (boot banner, estop ack, `W` ack, etc.). |
 
 ## Example session
 
@@ -43,14 +42,13 @@ Pi -> Mega: R
 Mega -> Pi: L,estop
 ```
 
-## Reliability notes
+## Reliability
 
-- The bridge keeps a single `serial.Serial` open for the life of the process
-  and a 50 ms read timeout. A missed line does not back up state: the next
-  `S` tick simply replaces the stale data.
-- Both sides are stateless with respect to sequence numbers. If a command is
-  lost, the brain re-publishes the same `/cmd/drive` Twist every control
-  cycle at 10 Hz, so the robot self-heals within one tick.
-- On the Pi side, opening the serial port triggers a Mega auto-reset, so the
-  bridge sleeps for 2 seconds after `Serial()` before sending the first
-  configuration commands.
+- Bridge keeps a single `serial.Serial` open for the life of the
+  process, 50 ms read timeout. A missed line doesn't back up state --
+  the next `S` tick replaces whatever was stale.
+- No sequence numbers. The brain re-publishes `/cmd/drive` every
+  control cycle at 10 Hz, so a dropped command self-heals in one
+  tick.
+- Opening the serial port triggers a Mega auto-reset, so the bridge
+  sleeps 2 s after `Serial()` before sending config commands.
