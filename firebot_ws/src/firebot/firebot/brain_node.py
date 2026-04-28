@@ -3,14 +3,19 @@
 States: IDLE, SEARCHING, AWAITING_CONFIRM, APPROACHING, WARNING,
         EXTINGUISHING, COMPLETE.
 
-Drive output is a `geometry_msgs/Twist` published to `/cmd/drive`. Because
-the PCB is wired for skid-steer (see docs/WIRING.md), we only populate
-`linear.x` and `angular.z`; the bridge node forwards vy=0 to the Mega.
+SEARCHING begins with a short straight forward segment (corner exit) so the
+robot leaves a corner before rotating to keep the fire in frame. Approach ends
+when the fire is centered and bbox area lies in
+[approach_bbox_min_frac, approach_bbox_max_frac], and APPROACHING has lasted at
+least approach_gate_min_sec — geared to slow indoor motion and ~1–3 FPS vision.
 
-Approach gating is pluggable via the `approach_strategy` parameter:
+Drive output is `geometry_msgs/Twist` on `/cmd/drive` (skid-steer: linear.x and
+angular.z; bridge forwards vy=0).
+
+Extra approach conditions via `approach_strategy`:
   * yolo_only              (default)
-  * yolo_ultrasonic        bbox + HC-SR04 within approach_distance_cm
-  * yolo_ultrasonic_ir     above plus KY-032 object detected
+  * yolo_ultrasonic        + HC-SR04 within approach_distance_cm
+  * yolo_ultrasonic_ir     + KY-032 object detected
 """
 
 import rclpy
@@ -41,14 +46,18 @@ class BrainNode(Node):
         self.declare_parameter('confidence_threshold', 0.5)
         self.declare_parameter('stable_frames', 5)
         self.declare_parameter('center_offset_thresh', 0.08)
-        self.declare_parameter('approach_bbox_thresh', 0.25)
-        self.declare_parameter('v_approach', 60.0)
-        self.declare_parameter('kp_yaw', 90.0)
-        self.declare_parameter('rotate_speed', 55.0)
+        self.declare_parameter('approach_bbox_min_frac', 0.10)
+        self.declare_parameter('approach_bbox_max_frac', 0.30)
+        self.declare_parameter('approach_gate_min_sec', 15.0)
+        self.declare_parameter('corner_exit_forward_sec', 2.0)
+        self.declare_parameter('corner_exit_speed', 30.0)
+        self.declare_parameter('v_approach', 32.0)
+        self.declare_parameter('kp_yaw', 50.0)
+        self.declare_parameter('rotate_speed', 32.0)
         self.declare_parameter('search_timeout_sec', 30.0)
         self.declare_parameter('confirm_timeout_sec', 30.0)
         self.declare_parameter('warning_seconds', 5)
-        self.declare_parameter('discharge_seconds', 8.0)
+        self.declare_parameter('discharge_seconds', 6.0)
         self.declare_parameter('complete_hold_sec', 3.0)
 
         self.declare_parameter('approach_strategy', 'yolo_only')
@@ -60,12 +69,16 @@ class BrainNode(Node):
 
         self.declare_parameter('approach_pulse_ms', 400)
         self.declare_parameter('approach_rest_ms', 600)
-        self.declare_parameter('approach_max_sec', 20.0)
+        self.declare_parameter('approach_max_sec', 60.0)
 
         self.conf_thresh = float(self.get_parameter('confidence_threshold').value)
         self.stable_frames = int(self.get_parameter('stable_frames').value)
         self.center_tol = float(self.get_parameter('center_offset_thresh').value)
-        self.bbox_thresh = float(self.get_parameter('approach_bbox_thresh').value)
+        self.bbox_area_min = float(self.get_parameter('approach_bbox_min_frac').value)
+        self.bbox_area_max = float(self.get_parameter('approach_bbox_max_frac').value)
+        self.approach_gate_min_sec = float(self.get_parameter('approach_gate_min_sec').value)
+        self.corner_exit_forward_sec = float(self.get_parameter('corner_exit_forward_sec').value)
+        self.corner_exit_speed = float(self.get_parameter('corner_exit_speed').value)
         self.v_approach = float(self.get_parameter('v_approach').value)
         self.kp_yaw = float(self.get_parameter('kp_yaw').value)
         self.rot_speed = float(self.get_parameter('rotate_speed').value)
@@ -119,6 +132,7 @@ class BrainNode(Node):
         self.last_countdown = -1
         self.approach_pulse_edge_ns = 0
         self.approach_pulse_driving = False
+        self.corner_exit_done = True
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
@@ -168,6 +182,7 @@ class BrainNode(Node):
     def _set_state(self, new_state: str):
         if new_state == self.state:
             return
+        old_state = self.state
         self.get_logger().info(f'state: {self.state} -> {new_state}')
         self.state = new_state
         self.state_enter = self.get_clock().now()
@@ -175,6 +190,8 @@ class BrainNode(Node):
         self.last_countdown = -1
         self.approach_pulse_edge_ns = 0
         self.approach_pulse_driving = False
+        if new_state == State.SEARCHING and old_state == State.IDLE:
+            self.corner_exit_done = False
         if new_state == State.IDLE:
             self._reset_transient()
 
@@ -216,7 +233,12 @@ class BrainNode(Node):
         det = self.latest_det
         if not self._detection_is_fire():
             return False
-        if float(det.bbox_area) < self.bbox_thresh:
+        if not self._centered_enough():
+            return False
+        area = float(det.bbox_area)
+        if area < self.bbox_area_min or area > self.bbox_area_max:
+            return False
+        if self._time_in_state() < self.approach_gate_min_sec:
             return False
         if self.approach_strategy == 'yolo_only':
             return True
@@ -257,6 +279,13 @@ class BrainNode(Node):
             self._reset_transient()
             self._set_state(State.IDLE)
             return
+
+        if not self.corner_exit_done:
+            if self._time_in_state() < self.corner_exit_forward_sec:
+                self.centered_streak = 0
+                self._drive(linear_x=self.corner_exit_speed, angular_z=0.0)
+                return
+            self.corner_exit_done = True
 
         det = self.latest_det
         if not self._detection_is_fire():
@@ -374,7 +403,8 @@ class BrainNode(Node):
 
     def _tick_extinguishing(self):
         elapsed = self._time_in_state()
-        pin_pull_dur = 1.5
+        # Match tested solenoid pulse / firmware EXT_PIN_PULL_MS (~1 s on bench harness).
+        pin_pull_dur = 1.0
         if elapsed < pin_pull_dur:
             self._send_ext(1)
         elif elapsed < pin_pull_dur + self.discharge_secs:

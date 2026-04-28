@@ -30,14 +30,14 @@
 
 // ---------- Pin map (FROM Fire_Bot.net) ----------
 // Left pair = DFR0601 #1 ch1 + DFR0601 #2 ch1.
-const uint8_t PIN_PWM1_A = 10, PIN_PWM1_B = 12;
-const uint8_t PIN_INA1_A = 38, PIN_INA1_B = 42;
-const uint8_t PIN_INB1_A = 39, PIN_INB1_B = 43;
+const uint8_t PIN_PWM1_A = 12, PIN_PWM1_B = 13;
+const uint8_t PIN_INA1_A = 51, PIN_INA1_B = 52;
+const uint8_t PIN_INB1_A = 49, PIN_INB1_B = 50;
 
 // Right pair = DFR0601 #1 ch2 + DFR0601 #2 ch2.
-const uint8_t PIN_PWM2_A = 11, PIN_PWM2_B = 13;
-const uint8_t PIN_INA2_A = 40, PIN_INA2_B = 44;
-const uint8_t PIN_INB2_A = 41, PIN_INB2_B = 45;
+const uint8_t PIN_PWM2_A = 10, PIN_PWM2_B = 11;
+const uint8_t PIN_INA2_A = 25, PIN_INA2_B = 24;
+const uint8_t PIN_INB2_A = 27, PIN_INB2_B = 26;
 
 // ---------- Runtime state ----------
 int g_default_pwm = 100;     // indoor-safe default

@@ -1,14 +1,15 @@
 vision_node:
   ros__parameters:
-    model_path: "/models/best.pt"
-    confidence_threshold: 0.6
+    model_path: "/models/best_small.pt"
+    confidence_threshold: 0.5
     inference_imgsz: 512
     max_det: 3
     fire_only: true
     fire_class_name: "Fire"
     camera_width: 640
     camera_height: 480
-    detection_fps: 5.0
+    # Match ~1–3 FPS on Pi + YOLO; brain motion is tuned for low-rate detections.
+    detection_fps: 3.0
 
 brain_node:
   ros__parameters:
@@ -16,31 +17,32 @@ brain_node:
     confidence_threshold: 0.5
     stable_frames: 5
     center_offset_thresh: 0.08
-    approach_bbox_thresh: 0.25
+    # Approach stop: fire centered and bbox_area in [min, max] (fraction of frame).
+    approach_bbox_min_frac: 0.10
+    approach_bbox_max_frac: 0.30
+    # Require this many seconds in APPROACHING before the bbox gate can finish
+    # (slow creep toward fire indoors).
+    approach_gate_min_sec: 15.0
 
-    # --- indoor-safe motion defaults ---
-    # PWM values go straight to the Mega's skid-steer mix (after scaling
-    # inside the bridge). Keep these small -- the robot lives in a room.
-    v_approach: 60.0          # forward PWM during approach pulses
-    kp_yaw: 90.0              # yaw P-gain (rad/s^-1 -> PWM)
-    rotate_speed: 55.0        # in-place spin PWM during SEARCHING
-    search_timeout_sec: 30.0
+    # First SEARCHING phase: straight forward out of corner (no yaw), seconds / PWM.
+    corner_exit_forward_sec: 2.0
+    corner_exit_speed: 30.0
+
+    # Low PWM for indoor + low vision FPS (see angular_scale on bridge).
+    v_approach: 32.0
+    kp_yaw: 50.0
+    rotate_speed: 32.0
+    search_timeout_sec: 45.0
     confirm_timeout_sec: 30.0
     warning_seconds: 5
-    discharge_seconds: 8.0
+    discharge_seconds: 6.0
     complete_hold_sec: 3.0
 
-    # --- approach behavior ---
-    # APPROACHING pulses motion: drive for approach_pulse_ms, coast for
-    # approach_rest_ms, then re-evaluate detection. That way the robot
-    # crawls forward in visible ~1 ft steps, never sprints at a wall, and
-    # teammates can clearly see each decision cycle. approach_max_sec is
-    # the hard safety cap -- if the gate never trips, we abort to WARNING.
-    approach_pulse_ms: 400
-    approach_rest_ms: 600
-    approach_max_sec: 20.0
+    approach_pulse_ms: 500
+    approach_rest_ms: 700
+    approach_max_sec: 60.0
 
-    approach_strategy: "yolo_only"   # yolo_only | yolo_ultrasonic | yolo_ultrasonic_ir
+    approach_strategy: "yolo_only"
     approach_distance_cm: 50
     safety_stop_cm: 20
     alarm_from_audio: false
@@ -52,12 +54,8 @@ arduino_bridge_node:
     serial_port: "/dev/ttyACM0"
     baud_rate: 115200
     sensor_poll_hz: 10.0
-    angular_scale: 80.0
-    # Optional sensors default off. Flip to `true` here (or send the same
-    # command at runtime with `C,US,1` / `C,IR,1` / `C,MIC,1`) once the
-    # corresponding hardware is mounted. With `enable_ultrasonic: true`
-    # and `approach_strategy: yolo_ultrasonic`, the brain will respect
-    # `safety_stop_cm` to avoid walls/obstacles during APPROACHING.
+    # Slightly lower than default so moderate brain angular_z maps to gentle spin.
+    angular_scale: 72.0
     enable_ultrasonic: false
     enable_ir: false
     enable_mic: false

@@ -11,6 +11,7 @@ __pycache__/
 
 # YOLO model weights / datasets -- keep out of git
 models/*.pt
+!models/best_small.pt
 models/*.onnx
 models/*.engine
 runs/

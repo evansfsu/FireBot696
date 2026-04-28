@@ -29,15 +29,15 @@ class VisionNode(Node):
     def __init__(self):
         super().__init__('vision_node')
 
-        self.declare_parameter('model_path', '/models/best.pt')
-        self.declare_parameter('confidence_threshold', 0.6)
+        self.declare_parameter('model_path', '/models/best_small.pt')
+        self.declare_parameter('confidence_threshold', 0.5)
         self.declare_parameter('inference_imgsz', 512)
         self.declare_parameter('max_det', 3)
         self.declare_parameter('fire_only', True)
         self.declare_parameter('fire_class_name', 'Fire')
         self.declare_parameter('camera_width', 640)
         self.declare_parameter('camera_height', 480)
-        self.declare_parameter('detection_fps', 5.0)
+        self.declare_parameter('detection_fps', 3.0)
 
         self.model_path = self.get_parameter('model_path').value
         self.conf_threshold = float(self.get_parameter('confidence_threshold').value)

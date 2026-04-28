@@ -1,7 +1,8 @@
 # Getting Started
 
-Everything below assumes the robot is wired per `Fire_Bot.net` and you
-have the Arduino IDE set up with the Mega 2560 board.
+Everything below assumes `firebot_mega.ino` pin assignments match your
+bench wiring (see **Bench-tested harness** in [docs/WIRING.md](docs/WIRING.md)
+and `arduino/tested_arduino/`). Legacy KiCad tables are for reference only.
 
 ## Three sketches
 
@@ -97,12 +98,14 @@ respects `safety_stop_cm`.
 | Commands do nothing | Line ending isn't set to Newline. |
 | Upload fails, "port busy" | Another Serial Monitor has the port open, or a power-only USB cable. |
 | Motors buzz, don't turn | Battery off / driver VM not powered. USB alone doesn't power motors. |
-| Only one side drives | Loose wire on one DFR0601. Both channels on each driver are ganged. |
+| Only one side drives | Loose wire on one motor channel (see WIRING.md harness table). |
 | `advance`/`retract` goes the wrong way | Swap A4988 coils or the DIR logic. |
 | `us` always returns -1 | HC-SR04 unwired or out of range. Try `watch us` while moving your hand in front of it. |
 | `pin on` does nothing | Solenoid rail off, or Q1 gate/flyback missing. Check the schematic. |
 
 ## Adding the Pi
+
+Command list for Pi 5 (git, Docker, scripts): [docs/RPI5_COMMANDS.md](docs/RPI5_COMMANDS.md).
 
 Flash `firebot_mega.ino`, plug the Mega into the Pi over USB, then on
 the Pi:
@@ -120,3 +123,25 @@ docker exec -it firebot-firebot-1 firebot estop
 Serial Monitor commands still work while the Pi is driving, but the
 brain will overwrite them on the next tick. Full flow in
 [docs/INTEGRATION.md](docs/INTEGRATION.md).
+
+### Vision weights
+
+Default Docker compose mounts `models/` to `/models`. The sample
+[`best_small.pt`](https://github.com/sayedgamal99/Real-Time-Smoke-Fire-Detection-YOLO11)
+is tracked in-repo; to use your own `.pt`, place it under `models/` and set
+`vision_node.model_path` in `firebot_ws/src/firebot/config/firebot_params.yaml`.
+
+### Standalone Pi tests (camera / YOLO / Mega USB)
+
+From the repo root on the Pi (with dependencies installed):
+
+```bash
+python3 scripts/rpi_test_camera.py --preview
+python3 scripts/rpi_test_yolo_fire.py --video-mode
+python3 scripts/rpi_test_yolo_fire.py --headless
+python3 scripts/rpi_test_arduino_serial.py --port /dev/ttyACM0
+```
+
+YOLO script defaults to `models/best_small.pt` (see [Flare Guard YOLO11](https://github.com/sayedgamal99/Real-Time-Smoke-Fire-Detection-YOLO11)). Use `--model path/to/fire_yolo11_small.pt` if you keep weights under another name. With the full stack running, `python3 scripts/rpi_test_yolo_fire.py --ros` forwards **a/z** (alarm), **c/x** (confirm/deny), **e** (estop) to ROS while showing the camera (desktop or VNC).
+
+Arduino serial test runs a **short spin** then **estop** — use blocks and `--spin-speed`/`--spin-ms` if needed. `--dry-run` prints commands only.

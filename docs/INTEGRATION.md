@@ -55,6 +55,10 @@ confirm, or a YOLO detection.
 While the Pi is running, the Mega is a slave -- Serial Monitor
 commands still work but get overwritten on the next tick.
 
+**Motors / stepper / solenoid GPIO** follow the bench harness documented in
+[WIRING.md](WIRING.md) (tested Arduino folder), not the legacy D38–D45
+redundant pairs on the schematic-only table.
+
 ## End-to-end run
 
 ```mermaid

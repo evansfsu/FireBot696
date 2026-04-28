@@ -1,14 +1,13 @@
 /*
  * FireBot696 unified Mega firmware.
  *
- * Pin map is taken verbatim from the wired schematic netlist
- * (FireBot696/Fire_Bot.net). Do not change without re-checking the netlist.
+ * Motor + extinguisher pins match bench-tested wiring (breadboard / harness):
+ *   arduino/tested_arduino/front_reverse_spin/front_reverse_spin.ino
+ *   arduino/tested_arduino/solenoid_stepper_combined/solenoid_stepper_combined.ino
  *
- * Because of how the PCB is wired, every drive signal lives on TWO Mega pins
- * and every encoder signal is shared across all four motors. This firmware
- * treats the robot as a 2-channel skid-steer platform (left pair + right pair)
- * and reports aggregate encoder ticks only. See docs/WIRING.md for the full
- * rationale.
+ * Encoder, ultrasonic, and IR/mic nets remain as in Fire_Bot.net (see docs/WIRING.md).
+ * Skid-steer commands (left pair / right pair) use the same per-corner direction
+ * patterns as the tested forward / reverse / spin-in-place routines.
  *
  * ============================================================================
  * TWO WAYS TO DRIVE THIS FIRMWARE
@@ -93,19 +92,13 @@
 
 #include <Arduino.h>
 
-// ---------- Pin map (FROM Fire_Bot.net) ----------
-// Each signal drives BOTH Mega pins in the redundant pair (see Section 3.2
-// of the plan). Software writes identical values to both pins every cycle.
-
-// Left-pair drive (DFR0601 #1 ch1 + DFR0601 #2 ch1)
-const uint8_t PIN_PWM1_A = 10, PIN_PWM1_B = 12;
-const uint8_t PIN_INA1_A = 38, PIN_INA1_B = 42;
-const uint8_t PIN_INB1_A = 39, PIN_INB1_B = 43;
-
-// Right-pair drive (DFR0601 #1 ch2 + DFR0601 #2 ch2)
-const uint8_t PIN_PWM2_A = 11, PIN_PWM2_B = 13;
-const uint8_t PIN_INA2_A = 40, PIN_INA2_B = 44;
-const uint8_t PIN_INB2_A = 41, PIN_INB2_B = 45;
+// ---------- Pin map: motors + extinguisher (tested_arduino) ----------
+// Front right: FP1 + FA1/FB1 | Front left: FP2 + FA2/FB2
+// Rear left: RP1 + RA1/RB1    | Rear right: RP2 + RA2/RB2
+const uint8_t FP1 = 12, FA1 = 51, FB1 = 49;
+const uint8_t FP2 = 13, FA2 = 52, FB2 = 50;
+const uint8_t RP1 = 10, RA1 = 25, RB1 = 27;
+const uint8_t RP2 = 11, RA2 = 24, RB2 = 26;
 
 // Encoders (ganged: all 4 Sensor A outputs on one net, all 4 Sensor B on another).
 // We poll ONE representative pin per channel; the other three are tied to the
@@ -113,12 +106,12 @@ const uint8_t PIN_INB2_A = 41, PIN_INB2_B = 45;
 const uint8_t ENC_A_PINS[4] = {30, 32, 34, 36};
 const uint8_t ENC_B_PINS[4] = {31, 33, 35, 37};
 
-// A4988 stepper (lead-screw clamp)
-const uint8_t PIN_STEP = 3;
-const uint8_t PIN_DIR  = 4;
+// A4988 stepper (lead-screw) — same nets as solenoid_stepper_combined.ino
+const uint8_t PIN_STEP = 8;
+const uint8_t PIN_DIR  = 9;
 
-// Solenoid (pin-pull), via NMOS gate + flyback diode on the board
-const uint8_t PIN_SOL = 7;
+// Solenoid (pin-pull)
+const uint8_t PIN_SOL = 4;
 
 // HC-SR04 ultrasonic
 const uint8_t PIN_US_TRIG = 48;
@@ -169,12 +162,13 @@ uint32_t g_ext_phase_start_ms = 0;
 uint32_t g_last_step_toggle_us = 0;
 uint8_t  g_step_level = LOW;
 int      g_step_dir   = 0;     // -1, 0, +1
-const uint16_t STEP_HALF_PERIOD_US = 500;  // ~1 kHz full-step rate
+// Step half-period (us): matches ~finalDelayUs in solenoid_stepper_combined.ino
+const uint16_t STEP_HALF_PERIOD_US = 170;
 
-// Timing constants for the extinguisher sequence (ms)
-const uint32_t EXT_PIN_PULL_MS  = 1500;
-const uint32_t EXT_ADVANCE_MS   = 6000;
-const uint32_t EXT_RETRACT_MS   = 6000;
+// Timing constants for the extinguisher sequence (ms) — tuned to tested sketch
+const uint32_t EXT_PIN_PULL_MS  = 1000;
+const uint32_t EXT_ADVANCE_MS   = 5300;
+const uint32_t EXT_RETRACT_MS   = 5300;
 
 // Ultrasonic read throttle
 uint32_t g_last_us_ms = 0;
@@ -290,34 +284,57 @@ static void cancelTestSeq();
 static void cancelTestState();
 static void serviceDriveWatchdog();
 
-// ---------- Helpers ----------
-static inline void setRedundantPair(uint8_t pinA, uint8_t pinB, uint8_t pwm) {
-  // Both Mega pins are shorted on the PCB; drive them identically.
-  analogWrite(pinA, pwm);
-  analogWrite(pinB, pwm);
-}
-
-static inline void setDirPair(uint8_t inaA, uint8_t inaB,
-                              uint8_t inbA, uint8_t inbB,
-                              bool forward) {
-  digitalWrite(inaA, forward ? HIGH : LOW);
-  digitalWrite(inaB, forward ? HIGH : LOW);
-  digitalWrite(inbA, forward ? LOW : HIGH);
-  digitalWrite(inbB, forward ? LOW : HIGH);
-}
-
+// ---------- Helpers (motor directions from tested_arduino/front_reverse_spin) ----------
 static void applyDrive(int left, int right) {
   left  = constrain(left,  -255, 255);
   right = constrain(right, -255, 255);
-  setDirPair(PIN_INA1_A, PIN_INA1_B, PIN_INB1_A, PIN_INB1_B, left  >= 0);
-  setDirPair(PIN_INA2_A, PIN_INA2_B, PIN_INB2_A, PIN_INB2_B, right >= 0);
-  setRedundantPair(PIN_PWM1_A, PIN_PWM1_B, (uint8_t)abs(left));
-  setRedundantPair(PIN_PWM2_A, PIN_PWM2_B, (uint8_t)abs(right));
+
+  const uint8_t lp = (uint8_t)abs(left);
+  const uint8_t rp = (uint8_t)abs(right);
+
+  if (left >= 0) {
+    digitalWrite(FA2, HIGH);
+    digitalWrite(FB2, LOW);
+    digitalWrite(RA1, HIGH);
+    digitalWrite(RB1, LOW);
+  } else {
+    digitalWrite(FA2, LOW);
+    digitalWrite(FB2, HIGH);
+    digitalWrite(RA1, LOW);
+    digitalWrite(RB1, HIGH);
+  }
+
+  if (right >= 0) {
+    digitalWrite(FA1, LOW);
+    digitalWrite(FB1, HIGH);
+    digitalWrite(RA2, LOW);
+    digitalWrite(RB2, HIGH);
+  } else {
+    digitalWrite(FA1, HIGH);
+    digitalWrite(FB1, LOW);
+    digitalWrite(RA2, HIGH);
+    digitalWrite(RB2, LOW);
+  }
+
+  analogWrite(FP2, lp);
+  analogWrite(RP1, lp);
+  analogWrite(FP1, rp);
+  analogWrite(RP2, rp);
 }
 
 static void stopMotors() {
-  setRedundantPair(PIN_PWM1_A, PIN_PWM1_B, 0);
-  setRedundantPair(PIN_PWM2_A, PIN_PWM2_B, 0);
+  analogWrite(FP1, 0);
+  analogWrite(FP2, 0);
+  analogWrite(RP1, 0);
+  analogWrite(RP2, 0);
+  digitalWrite(FA1, LOW);
+  digitalWrite(FB1, LOW);
+  digitalWrite(FA2, LOW);
+  digitalWrite(FB2, LOW);
+  digitalWrite(RA1, LOW);
+  digitalWrite(RB1, LOW);
+  digitalWrite(RA2, LOW);
+  digitalWrite(RB2, LOW);
   g_left_cmd = 0;
   g_right_cmd = 0;
 }
@@ -343,6 +360,11 @@ static void handleMotorCmd(int vx, int /*vy*/, int wz) {
 }
 
 static void startExtinguisherPhase(uint8_t phase) {
+  // Pi may publish the same E phase every control cycle; avoid resetting the
+  // phase timer or the stepper/solenoid state while a timed phase is active.
+  if (phase == g_ext_phase && phase >= 1 && phase <= 3)
+    return;
+
   g_ext_phase = phase;
   g_ext_phase_start_ms = millis();
   switch (phase) {
@@ -356,15 +378,15 @@ static void startExtinguisherPhase(uint8_t phase) {
       g_step_dir = 0;
       g_state = FW_EXTINGUISHING;
       break;
-    case 2:  // advance lead-screw (clamp)
+    case 2:  // advance lead-screw (same DIR as runStepperForDuration: LOW)
       digitalWrite(PIN_SOL, LOW);
-      digitalWrite(PIN_DIR, HIGH);
+      digitalWrite(PIN_DIR, LOW);
       g_step_dir = +1;
       g_state = FW_EXTINGUISHING;
       break;
-    case 3:  // retract lead-screw
+    case 3:  // retract (same DIR as reverseStepperForDuration: HIGH)
       digitalWrite(PIN_SOL, LOW);
-      digitalWrite(PIN_DIR, LOW);
+      digitalWrite(PIN_DIR, HIGH);
       g_step_dir = -1;
       g_state = FW_EXTINGUISHING;
       break;
@@ -576,8 +598,8 @@ static void printHelp() {
   Serial.println();
   Serial.println(F("Extinguisher:"));
   Serial.println(F("  pin on | pin off        solenoid (pin-puller)"));
-  Serial.println(F("  advance                 lead-screw forward (auto-stop 6s)"));
-  Serial.println(F("  retract                 lead-screw reverse (auto-stop 6s)"));
+  Serial.println(F("  advance                 lead-screw forward (~5.3 s auto-stop)"));
+  Serial.println(F("  retract                 lead-screw reverse (~5.3 s auto-stop)"));
   Serial.println(F("  extstop                 halt the stepper now"));
   Serial.println();
   Serial.println(F("Sensors (disabled = '-1' / 'off'):"));
@@ -1229,9 +1251,9 @@ void setup() {
   Serial.begin(115200);
 
   const uint8_t outputs[] = {
-    PIN_PWM1_A, PIN_PWM1_B, PIN_PWM2_A, PIN_PWM2_B,
-    PIN_INA1_A, PIN_INA1_B, PIN_INB1_A, PIN_INB1_B,
-    PIN_INA2_A, PIN_INA2_B, PIN_INB2_A, PIN_INB2_B,
+    FP1, FP2, RP1, RP2,
+    FA1, FB1, FA2, FB2,
+    RA1, RB1, RA2, RB2,
     PIN_STEP, PIN_DIR, PIN_SOL, PIN_US_TRIG
   };
   for (uint8_t i = 0; i < sizeof(outputs); i++) {
