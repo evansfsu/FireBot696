@@ -28,7 +28,8 @@ outputs go LOW, and the Mega prints `L,firebot_mega_ready`.
 
 Pi is not plugged in. Power the Mega off USB, the barrel jack, or VIN.
 Open the Serial Monitor at 115200 / Newline and use the commands in
-[ARDUINO_TESTING.md](ARDUINO_TESTING.md). Firmware starts in `FW_IDLE`.
+[ARDUINO_TESTING.md](ARDUINO_TESTING.md) and the overview
+[COMMANDS.md](COMMANDS.md). Firmware starts in `FW_IDLE`.
 Short version:
 
 ```text

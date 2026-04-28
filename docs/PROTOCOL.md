@@ -5,12 +5,16 @@ terminated. The bridge sends commands as they arrive from ROS topics
 plus an `S` status request on a timer. The Mega only initiates
 messages for `L,<log>` lines (boot, estop, errors).
 
+**Command map:** see [COMMANDS.md](COMMANDS.md) for machine vs human vs Pi script.
+
+Machine lines start with a single **uppercase** letter followed by nothing or a comma (see parser in `firebot_mega.ino`). Anything else (e.g. `go`, `help`, `forward 75`) is handled as a **human Serial Monitor** command — useful for bench tests from `scripts/rpi_test_arduino_serial.py` without adding a new protocol letter.
+
 ## Pi -> Mega
 
 | Command | Args | Meaning |
 |---|---|---|
 | `M,vx,vy,wz` | ints -255..255 | drive. `vy` ignored (skid-steer). Mega computes `left = vx + wz`, `right = vx - wz`. |
-| `E,phase` | 0..4 | extinguisher: `0` off, `1` pin-pull, `2` advance, `3` retract, `4` stop stepper. |
+| `E,phase` | 0..4 | extinguisher: `0` off, `1` pin-pull, `2` advance, `3` retract, `4` stop stepper. Phases `2` and `3` run the lead screw for **~5.3 s** each (`EXT_STEPPER_RUN_MS`), with the same ramp as the bench sketch, then the firmware stops that motion. |
 | `W,mode` | 0..2 | warning: `0` off, `1` steady, `2` countdown. No physical output yet (no buzzer). |
 | `S` | -- | request status reply. |
 | `R` | -- | e-stop. All outputs LOW, firmware -> `ESTOP`. |
@@ -52,3 +56,11 @@ Mega -> Pi: L,estop
   tick.
 - Opening the serial port triggers a Mega auto-reset, so the bridge
   sleeps 2 s after `Serial()` before sending config commands.
+
+## Drive watchdog (protocol `M` only)
+
+If the last **non-zero** `M,vx,vy,wz` came from the protocol path (`g_protocol_drive` armed), and no new `M` arrives for **~1 s** (`PROTOCOL_DRIVE_WATCHDOG_MS`), the Mega zeros the motors. Custom scripts that hold a pose longer than that must **repeat `M` at least every second** (see `scripts/rpi_test_arduino_serial.py` `motor_hold()`). Human Serial Monitor commands (`forward`, `left`, …) do **not** arm this watchdog.
+
+## Non-protocol lines: `go` and friends
+
+The firmware accepts the same plain-text commands as the Serial Monitor on the same port. Example: send ASCII `go\n` for the full bench solenoid + lead-screw sequence (timed like `arduino/tested_arduino/solenoid_stepper_combined/`). For a minimal Pi-side harness without ROS, use [scripts/rpi_test_arduino_serial.py](../scripts/rpi_test_arduino_serial.py).

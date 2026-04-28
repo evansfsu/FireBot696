@@ -9,6 +9,7 @@ drivers, A4988 lead-screw clamp, solenoid pin-puller.
 | What you want | File |
 |---|---|
 | Fast path for bench-testing with Arduino | [GETTING_STARTED.md](GETTING_STARTED.md) |
+| Command map (Pi, Serial Monitor, test script) | [docs/COMMANDS.md](docs/COMMANDS.md) |
 | Full Serial Monitor command reference | [docs/ARDUINO_TESTING.md](docs/ARDUINO_TESTING.md) |
 | How the Pi and Mega behave together | [docs/INTEGRATION.md](docs/INTEGRATION.md) |
 | Node + topic diagram | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |

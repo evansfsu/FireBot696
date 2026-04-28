@@ -110,12 +110,18 @@ python3 scripts/rpi_test_yolo_fire.py --headless
 python3 scripts/rpi_test_yolo_fire.py --model ~/FireBot696/models/best_small.pt --conf 0.2 --infer-every-n 3
 ```
 
-Arduino USB serial (robot on blocks; short spin then estop):
+Arduino USB serial — **no ROS required** (`pyserial`). Put the robot **on blocks**; see [COMMANDS.md](COMMANDS.md) and [PROTOCOL.md](PROTOCOL.md).
 
 ```bash
-python3 scripts/rpi_test_arduino_serial.py --port /dev/ttyACM0
-python3 scripts/rpi_test_arduino_serial.py --dry-run
+cd ~/FireBot696
+python3 scripts/rpi_test_arduino_serial.py --port /dev/ttyACM0 smoke    # short spin + estop
+python3 scripts/rpi_test_arduino_serial.py spin --ms 3000 --wz 40
+python3 scripts/rpi_test_arduino_serial.py advance   # E,2 ~5.3 s lead-screw
+python3 scripts/rpi_test_arduino_serial.py go --wait-s 30
+python3 scripts/rpi_test_arduino_serial.py smoke --dry-run   # print only
 ```
+
+Subcommands: `smoke`, `spin`, `drive`, `advance`, `retract`, `go`, `status`, `estop`, `dry-commands`. Defaults: `--port /dev/ttyACM0`, `--baud 115200`, `--settle 2.0`.
 
 YOLO + ROS keys (desktop or VNC; stack must be running, workspace sourced):
 
@@ -167,6 +173,7 @@ After editing, rebuild the `firebot` image (or use `firebot-dev` so the file is 
 
 ## Other docs
 
+- Command guide (Pi / Serial Monitor / script): [COMMANDS.md](COMMANDS.md)
 - Wiring: [WIRING.md](WIRING.md)
 - Pi ↔ Mega: [INTEGRATION.md](INTEGRATION.md)
 - Serial protocol: [PROTOCOL.md](PROTOCOL.md)

@@ -35,7 +35,8 @@
  *      drive <vx> <wz>      raw skid-steer command, each -255..255
  *      stop                 motors off
  *      pin on | pin off     solenoid directly
- *      advance | retract    run lead-screw (auto-stops after 6 s)
+ *      advance | retract    run lead-screw (auto-stops after ~5.3 s, ramped)
+ *      go                    full bench sequence (timers like solenoid_stepper_combined)
  *      extstop              stop the stepper immediately
  *      sensor us on|off     enable/disable HC-SR04
  *      sensor ir on|off     enable/disable KY-032
@@ -158,17 +159,39 @@ uint8_t g_last_encB = 0;
 uint8_t  g_ext_phase = 0;      // 0=off 1=pin_pull 2=advance 3=retract 4=stop
 uint32_t g_ext_phase_start_ms = 0;
 
-// Stepper step generator (non-blocking)
+// Step / solenoid timing — same numbers as solenoid_stepper_combined.ino
+const uint16_t STEP_RAMP_START_HALF_US = 400;
+const uint16_t STEP_RAMP_END_HALF_US   = 170;
+const int16_t  STEP_RAMP_DELTA_HALF_US = -10;
+const uint8_t  STEP_RAMP_STEPS_PER_BAND = 40;
+const uint32_t EXT_STEPPER_RUN_MS = 5300;
+const uint32_t EXT_PIN_PULL_MS    = 1000;
+const uint32_t GO_PRE_SOL_MS   = 3000;
+const uint32_t GO_POST_SOL_MS  = 3000;
+const uint32_t GO_PRE_REV_MS   = 5000;
+
+// Stepper ramp + square wave (non-blocking)
 uint32_t g_last_step_toggle_us = 0;
 uint8_t  g_step_level = LOW;
 int      g_step_dir   = 0;     // -1, 0, +1
-// Step half-period (us): matches ~finalDelayUs in solenoid_stepper_combined.ino
-const uint16_t STEP_HALF_PERIOD_US = 170;
+uint16_t g_step_half_us = STEP_RAMP_START_HALF_US;
+uint8_t  g_ramp_edge_flip = 0;
+uint8_t  g_ramp_pulses_at_speed = 0;
+bool     g_stepper_ramp_complete = false;
 
-// Timing constants for the extinguisher sequence (ms) — tuned to tested sketch
-const uint32_t EXT_PIN_PULL_MS  = 1000;
-const uint32_t EXT_ADVANCE_MS   = 5300;
-const uint32_t EXT_RETRACT_MS   = 5300;
+// Full bench "GO" sequence (timed like tested sketch)
+enum GoSeqState : uint8_t {
+  GOSEQ_OFF = 0,
+  GOSEQ_PRE_SOL,
+  GOSEQ_SOL_ON,
+  GOSEQ_POST_SOL,
+  GOSEQ_STEP_FWD,
+  GOSEQ_PRE_REV,
+  GOSEQ_STEP_REV,
+  GOSEQ_DONE
+};
+uint8_t  g_goseq = GOSEQ_OFF;
+uint32_t g_goseq_phase_ms = 0;
 
 // Ultrasonic read throttle
 uint32_t g_last_us_ms = 0;
@@ -199,8 +222,9 @@ uint8_t  g_test_state = TS_OFF;
 uint32_t g_test_state_start_ms = 0;
 // Indoor-safe defaults: slow forward, slightly faster in-place rotation.
 // Rotating in place doesn't translate the chassis so it can afford more PWM.
-int      g_test_rotate_speed = 100;
-int      g_test_forward_speed = 80;
+// Indoor-safe defaults = tested_arduino/front_reverse_spin motorSpeed (75)
+int      g_test_rotate_speed = 75;
+int      g_test_forward_speed = 75;
 // Approaching in the state-mirror demo pulses forward in short chunks so the
 // robot never runs more than ~half a second before re-evaluating. Teammates
 // can see every step of the approach; the chassis won't cross a small room.
@@ -253,7 +277,7 @@ uint8_t  g_tseq_step = 0;
 uint32_t g_tseq_step_start_ms = 0;
 // Indoor-safe default PWM for canned tests. Teammates can still override
 // with e.g. `test motors 150` when the robot is on blocks.
-int      g_tseq_speed = 100;
+int      g_tseq_speed = 75;
 
 // Action codes (shared across all sequences)
 //  0 = stop motors + solenoid + stepper
@@ -269,10 +293,10 @@ static const TestStep MOTOR_SEQ[] PROGMEM = {
   {0, 0}
 };
 static const TestStep SOLENOID_SEQ[] PROGMEM = {
-  {5, 800}, {6, 800}, {5, 800}, {6, 0}
+  {5, 1000}, {6, 800}, {5, 1000}, {6, 0}
 };
 static const TestStep STEPPER_SEQ[] PROGMEM = {
-  {7, 3000}, {0, 500}, {8, 3000}, {0, 0}
+  {7, 5300}, {0, 500}, {8, 5300}, {0, 0}
 };
 
 // ---------- Forward declarations ----------
@@ -280,6 +304,10 @@ static const TestStep STEPPER_SEQ[] PROGMEM = {
 // buildable in plain avr-gcc projects too.
 static void handleMotorCmd(int vx, int vy, int wz);
 static void startExtinguisherPhase(uint8_t phase);
+static void resetStepperRamp();
+static void cancelGoSequence(bool silent = true);
+static void serviceGoSequence();
+static void startGoSequence();
 static void cancelTestSeq();
 static void cancelTestState();
 static void serviceDriveWatchdog();
@@ -339,8 +367,30 @@ static void stopMotors() {
   g_right_cmd = 0;
 }
 
+static void resetStepperRamp() {
+  g_step_half_us = STEP_RAMP_START_HALF_US;
+  g_ramp_edge_flip = 0;
+  g_ramp_pulses_at_speed = 0;
+  g_stepper_ramp_complete = false;
+  g_last_step_toggle_us = micros();
+}
+
+/** Stop bench "GO" sequence. @param silent if true, no L,go_cancelled line */
+static void cancelGoSequence(bool silent) {
+  bool was_active = (g_goseq != GOSEQ_OFF && g_goseq != GOSEQ_DONE);
+  g_goseq = GOSEQ_OFF;
+  digitalWrite(PIN_SOL, LOW);
+  g_step_dir = 0;
+  digitalWrite(PIN_STEP, LOW);
+  g_step_level = LOW;
+  if (was_active && !silent) {
+    Serial.println(F("L,go_cancelled"));
+  }
+}
+
 static void allOutputsOff() {
   stopMotors();
+  cancelGoSequence(true);
   digitalWrite(PIN_SOL, LOW);
   g_step_dir = 0;
   digitalWrite(PIN_STEP, LOW);
@@ -360,6 +410,7 @@ static void handleMotorCmd(int vx, int /*vy*/, int wz) {
 }
 
 static void startExtinguisherPhase(uint8_t phase) {
+  cancelGoSequence(true);
   // Pi may publish the same E phase every control cycle; avoid resetting the
   // phase timer or the stepper/solenoid state while a timed phase is active.
   if (phase == g_ext_phase && phase >= 1 && phase <= 3)
@@ -371,6 +422,8 @@ static void startExtinguisherPhase(uint8_t phase) {
     case 0:  // off
       digitalWrite(PIN_SOL, LOW);
       g_step_dir = 0;
+      digitalWrite(PIN_STEP, LOW);
+      g_step_level = LOW;
       g_state = (g_left_cmd || g_right_cmd) ? FW_DRIVING : FW_IDLE;
       break;
     case 1:  // pin pull: energize solenoid
@@ -382,18 +435,22 @@ static void startExtinguisherPhase(uint8_t phase) {
       digitalWrite(PIN_SOL, LOW);
       digitalWrite(PIN_DIR, LOW);
       g_step_dir = +1;
+      resetStepperRamp();
       g_state = FW_EXTINGUISHING;
       break;
     case 3:  // retract (same DIR as reverseStepperForDuration: HIGH)
       digitalWrite(PIN_SOL, LOW);
       digitalWrite(PIN_DIR, HIGH);
       g_step_dir = -1;
+      resetStepperRamp();
       g_state = FW_EXTINGUISHING;
       break;
     case 4:  // stop
     default:
       digitalWrite(PIN_SOL, LOW);
       g_step_dir = 0;
+      digitalWrite(PIN_STEP, LOW);
+      g_step_level = LOW;
       g_state = (g_left_cmd || g_right_cmd) ? FW_DRIVING : FW_IDLE;
       break;
   }
@@ -408,20 +465,120 @@ static void serviceExtinguisher() {
     // the Pi issues the next E command.
     return;
   }
-  if (g_ext_phase == 2 && elapsed >= EXT_ADVANCE_MS) {
+  if (g_ext_phase == 2 && elapsed >= EXT_STEPPER_RUN_MS) {
     startExtinguisherPhase(4);
-  } else if (g_ext_phase == 3 && elapsed >= EXT_RETRACT_MS) {
+  } else if (g_ext_phase == 3 && elapsed >= EXT_STEPPER_RUN_MS) {
     startExtinguisherPhase(4);
+  }
+}
+
+static void startGoSequence() {
+  if (g_goseq != GOSEQ_OFF && g_goseq != GOSEQ_DONE) {
+    Serial.println(F("L,go_busy"));
+    return;
+  }
+  cancelTestState();
+  cancelGoSequence(true);
+  digitalWrite(PIN_SOL, LOW);
+  g_step_dir = 0;
+  digitalWrite(PIN_STEP, LOW);
+  g_step_level = LOW;
+  g_goseq = GOSEQ_PRE_SOL;
+  g_goseq_phase_ms = millis();
+  g_state = FW_EXTINGUISHING;
+  Serial.println(F("L,go_start"));
+}
+
+/** Timers match solenoid_stepper_combined.ino; stepper uses serviceStepper() ramp. */
+static void serviceGoSequence() {
+  if (g_goseq == GOSEQ_OFF || g_goseq == GOSEQ_DONE) return;
+
+  uint32_t now = millis();
+  uint32_t t = now - g_goseq_phase_ms;
+
+  switch (g_goseq) {
+    case GOSEQ_PRE_SOL:
+      if (t >= GO_PRE_SOL_MS) {
+        g_goseq = GOSEQ_SOL_ON;
+        g_goseq_phase_ms = now;
+        digitalWrite(PIN_SOL, HIGH);
+      }
+      break;
+    case GOSEQ_SOL_ON:
+      if (t >= EXT_PIN_PULL_MS) {
+        digitalWrite(PIN_SOL, LOW);
+        g_goseq = GOSEQ_POST_SOL;
+        g_goseq_phase_ms = now;
+      }
+      break;
+    case GOSEQ_POST_SOL:
+      if (t >= GO_POST_SOL_MS) {
+        g_goseq = GOSEQ_STEP_FWD;
+        g_goseq_phase_ms = now;
+        digitalWrite(PIN_DIR, LOW);
+        g_step_dir = +1;
+        resetStepperRamp();
+      }
+      break;
+    case GOSEQ_STEP_FWD:
+      if (t >= EXT_STEPPER_RUN_MS) {
+        g_step_dir = 0;
+        digitalWrite(PIN_STEP, LOW);
+        g_step_level = LOW;
+        g_goseq = GOSEQ_PRE_REV;
+        g_goseq_phase_ms = now;
+      }
+      break;
+    case GOSEQ_PRE_REV:
+      if (t >= GO_PRE_REV_MS) {
+        g_goseq = GOSEQ_STEP_REV;
+        g_goseq_phase_ms = now;
+        digitalWrite(PIN_DIR, HIGH);
+        g_step_dir = -1;
+        resetStepperRamp();
+      }
+      break;
+    case GOSEQ_STEP_REV:
+      if (t >= EXT_STEPPER_RUN_MS) {
+        g_step_dir = 0;
+        digitalWrite(PIN_STEP, LOW);
+        g_step_level = LOW;
+        digitalWrite(PIN_SOL, LOW);
+        g_goseq = GOSEQ_DONE;
+        g_state = FW_IDLE;
+        Serial.println(F("L,go_complete"));
+      }
+      break;
+    default:
+      break;
   }
 }
 
 static void serviceStepper() {
   if (g_step_dir == 0) return;
+  uint16_t half = g_stepper_ramp_complete ? STEP_RAMP_END_HALF_US : g_step_half_us;
   uint32_t now = micros();
-  if ((uint32_t)(now - g_last_step_toggle_us) >= STEP_HALF_PERIOD_US) {
-    g_step_level = !g_step_level;
-    digitalWrite(PIN_STEP, g_step_level);
-    g_last_step_toggle_us = now;
+  if ((uint32_t)(now - g_last_step_toggle_us) < half) return;
+
+  g_step_level = !g_step_level;
+  digitalWrite(PIN_STEP, g_step_level);
+  g_last_step_toggle_us = now;
+
+  if (g_stepper_ramp_complete) return;
+
+  g_ramp_edge_flip ^= 1;
+  if (g_ramp_edge_flip != 0) return;
+
+  g_ramp_pulses_at_speed++;
+  if (g_ramp_pulses_at_speed < STEP_RAMP_STEPS_PER_BAND) return;
+
+  g_ramp_pulses_at_speed = 0;
+  int next = (int)g_step_half_us + STEP_RAMP_DELTA_HALF_US;
+  if (next >= (int)STEP_RAMP_END_HALF_US) {
+    g_step_half_us = (uint16_t)next;
+  } else {
+    g_step_half_us = STEP_RAMP_END_HALF_US;
+    g_stepper_ramp_complete = true;
   }
 }
 
@@ -598,6 +755,7 @@ static void printHelp() {
   Serial.println();
   Serial.println(F("Extinguisher:"));
   Serial.println(F("  pin on | pin off        solenoid (pin-puller)"));
+  Serial.println(F("  go                      full bench sequence (same timing as tested sketch)"));
   Serial.println(F("  advance                 lead-screw forward (~5.3 s auto-stop)"));
   Serial.println(F("  retract                 lead-screw reverse (~5.3 s auto-stop)"));
   Serial.println(F("  extstop                 halt the stepper now"));
@@ -626,7 +784,7 @@ static void printHelp() {
   Serial.println(F("Canned tests (one-word subsystem sanity checks):"));
   Serial.println(F("  test motors [speed]     fwd/back/left/right cycle"));
   Serial.println(F("  test solenoid           on/off/on/off"));
-  Serial.println(F("  test stepper            advance 3s then retract 3s"));
+  Serial.println(F("  test stepper            advance ~5.3s then retract ~5.3s"));
   Serial.println(F("  test all [speed]        motors -> stepper -> solenoid"));
   Serial.println(F("  test stop               cancel a running sequence"));
   Serial.println();
@@ -646,6 +804,7 @@ static void printHelp() {
 static void enterTestState(uint8_t ts) {
   // A state-mirror demo cannot coexist with a canned test sequence.
   if (g_tseq != TSEQ_NONE) cancelTestSeq();
+  cancelGoSequence(true);
   g_test_state = ts;
   g_test_state_start_ms = millis();
   g_test_last_countdown = -1;
@@ -711,12 +870,12 @@ static void serviceTestState() {
       if (elapsed >= EXT_PIN_PULL_MS) enterTestState(TS_EXT_ADVANCE);
       break;
     case TS_EXT_ADVANCE:
-      // serviceExtinguisher() will auto-stop the stepper after EXT_ADVANCE_MS;
-      // we just time the transition independently so the test FSM advances.
-      if (elapsed >= EXT_ADVANCE_MS) enterTestState(TS_EXT_RETRACT);
+      // serviceExtinguisher() stops the stepper after EXT_STEPPER_RUN_MS;
+      // we time the test FSM to match that lead-screw run window.
+      if (elapsed >= EXT_STEPPER_RUN_MS) enterTestState(TS_EXT_RETRACT);
       break;
     case TS_EXT_RETRACT:
-      if (elapsed >= EXT_RETRACT_MS) enterTestState(TS_COMPLETE);
+      if (elapsed >= EXT_STEPPER_RUN_MS) enterTestState(TS_COMPLETE);
       break;
     case TS_COMPLETE:
       if (elapsed >= 3000UL) enterTestState(TS_IDLE);
@@ -783,9 +942,12 @@ static const char* actionName(uint8_t a) {
 static void performAction(uint8_t a) {
   switch (a) {
     case 0:
+      cancelGoSequence(true);
       stopMotors();
       digitalWrite(PIN_SOL, LOW);
       g_step_dir = 0;
+      digitalWrite(PIN_STEP, LOW);
+      g_step_level = LOW;
       break;
     case 1: handleMotorCmd( g_tseq_speed, 0, 0); break;
     case 2: handleMotorCmd(-g_tseq_speed, 0, 0); break;
@@ -838,6 +1000,7 @@ static void startTestSeq(uint8_t seq, int speed) {
     g_test_state = TS_OFF;
     Serial.println(F("L,test_state=off"));
   }
+  cancelGoSequence(true);
   g_tseq = seq;
   g_tseq_step = 0;
   g_tseq_speed = constrain(speed, 0, 255);
@@ -1024,7 +1187,7 @@ static bool handleHumanLine(char* line) {
   int spd = 0;
   if (strcmp(cmd, "forward") == 0) {
     char* a; nextToken(rest, &a);
-    if (!parseInt(a, &spd)) spd = 150;
+    if (!parseInt(a, &spd)) spd = 75;
     cancelTestState();
     handleMotorCmd(spd, 0, 0);
     return true;
@@ -1032,21 +1195,21 @@ static bool handleHumanLine(char* line) {
   if (strcmp(cmd, "back") == 0 || strcmp(cmd, "backward") == 0 ||
       strcmp(cmd, "reverse") == 0) {
     char* a; nextToken(rest, &a);
-    if (!parseInt(a, &spd)) spd = 150;
+    if (!parseInt(a, &spd)) spd = 75;
     cancelTestState();
     handleMotorCmd(-spd, 0, 0);
     return true;
   }
   if (strcmp(cmd, "left") == 0) {
     char* a; nextToken(rest, &a);
-    if (!parseInt(a, &spd)) spd = 100;
+    if (!parseInt(a, &spd)) spd = 75;
     cancelTestState();
     handleMotorCmd(0, 0, spd);
     return true;
   }
   if (strcmp(cmd, "right") == 0) {
     char* a; nextToken(rest, &a);
-    if (!parseInt(a, &spd)) spd = 100;
+    if (!parseInt(a, &spd)) spd = 75;
     cancelTestState();
     handleMotorCmd(0, 0, -spd);
     return true;
@@ -1075,6 +1238,7 @@ static bool handleHumanLine(char* line) {
     }
     return true;
   }
+  if (strcmp(cmd, "go") == 0) { startGoSequence(); return true; }
   if (strcmp(cmd, "advance") == 0) { startExtinguisherPhase(2); return true; }
   if (strcmp(cmd, "retract") == 0) { startExtinguisherPhase(3); return true; }
   if (strcmp(cmd, "extstop") == 0) { startExtinguisherPhase(4); return true; }
@@ -1283,6 +1447,7 @@ void setup() {
 
 void loop() {
   pollSerial();
+  serviceGoSequence();
   serviceStepper();
   serviceExtinguisher();
   serviceEncoders();

@@ -39,8 +39,8 @@ pins in the sketch.
 pin on       solenoid energize (pin pulled)
 pin off      release
 pulse 1500   pin on for 1.5 s then off
-advance      lead-screw forward 6 s (auto-stops)
-retract      lead-screw reverse 6 s (auto-stops)
+advance      lead-screw forward ~5.3 s (auto-stops)
+retract      lead-screw reverse ~5.3 s (auto-stops)
 stop         halt the stepper now
 seq          full discharge: pin -> advance -> retract
 abort        cancel seq mid-run
@@ -54,10 +54,11 @@ machine protocol the Pi speaks. Useful commands:
 ```text
 help                       full menu
 status                     current state, drive values, sensors
-forward 100 / back 100     drive
-left 100 / right 100       spin in place
+forward 100 / back 100     drive (default speed 75 if omitted)
+left 75 / right 75         spin in place
+go                         full bench solenoid + lead-screw sequence
 pin on / pin off           solenoid
-advance / retract          lead-screw
+advance / retract          lead-screw ~5.3 s each (auto-stop)
 sensor us on | off         enable/disable HC-SR04 (same for ir, mic)
 watch us                   live distance line every second
 state searching            spin in place until 'stop'
@@ -68,7 +69,7 @@ test motors | solenoid | stepper | all
 estop                      all outputs LOW, firmware -> ESTOP
 ```
 
-Full reference: [docs/ARDUINO_TESTING.md](docs/ARDUINO_TESTING.md).
+Full reference: [docs/ARDUINO_TESTING.md](docs/ARDUINO_TESTING.md). Command map (Pi vs Monitor vs script): [docs/COMMANDS.md](docs/COMMANDS.md).
 
 ## Indoor safety
 

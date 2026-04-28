@@ -1,8 +1,9 @@
 # Arduino Serial Monitor reference
 
 For the big picture of how the Mega and Pi interact, see
-[INTEGRATION.md](INTEGRATION.md). This page is just the command list for
-`arduino/firebot_mega/firebot_mega.ino` when you're driving it by hand.
+[INTEGRATION.md](INTEGRATION.md). **All commands in one place:** [COMMANDS.md](COMMANDS.md).
+This page is the detailed list for `arduino/firebot_mega/firebot_mega.ino` when you're
+driving it by hand.
 
 For single-subsystem sketches with a smaller command set, see
 `arduino/tests/drive_test/` and `arduino/tests/extinguisher_test/`
@@ -17,7 +18,7 @@ L,type 'help' for the Serial Monitor command menu
 ```
 
 Human commands are latched until you cancel them (type `stop`). The
-Pi-side protocol (`M,E,W,S,R,C`) *is* watchdogged at 1 s so a crashed
+Pi-side protocol (`M,E,W,S,R,C`) *is* watchdogged at ~1 s so a crashed
 bridge can't leave the motors running.
 
 ## Subsystem tests
@@ -25,10 +26,10 @@ bridge can't leave the motors running.
 Non-blocking. `stop` or `test stop` cancels.
 
 ```text
-test motors          fwd 1s -> stop -> back 1s -> stop -> spin L -> spin R -> stop
-test motors 200      same, PWM 200 (default 150)
-test solenoid        on 0.8s -> off 0.8s -> on 0.8s -> off
-test stepper         advance 3s -> stop -> retract 3s -> stop
+test motors          fwd/back/spin cycle (short bursts; default speed 75)
+test motors 200      same with PWM 200
+test solenoid        on/off pulses (1 s on in pattern)
+test stepper         advance ~5.3 s -> rest -> retract ~5.3 s
 test all             motors, stepper, solenoid in sequence
 test stop            cancel
 ```
@@ -39,8 +40,8 @@ sanity-checking the firmware side before parts are mounted.
 
 ## Motion
 
-Case-insensitive, space-separated. Numbers are optional (default to
-sane speeds).
+Case-insensitive, space-separated. Numbers are optional (defaults **75**
+for forward/back/left/right, matching `arduino/tested_arduino/front_reverse_spin`).
 
 ```text
 forward 120
@@ -54,11 +55,12 @@ stop
 ## Extinguisher
 
 ```text
-pin on               solenoid energize
-pin off              release
-advance              A4988 forward 6 s (auto-stops)
-retract              A4988 reverse 6 s
-extstop              halt the stepper
+go                 full bench sequence: delays, pin-pull, lead-screw out/in (see firmware)
+pin on             solenoid energize
+pin off            release
+advance            lead-screw forward ~5.3 s (auto-stops, ramped)
+retract            lead-screw reverse ~5.3 s
+extstop            halt the stepper
 ```
 
 ## Sensors
@@ -143,7 +145,7 @@ Any subsequent motion command clears it.
 ## Notes
 
 - Protocol commands (`M,80,0,0`, `E,1`, `S`) and human commands work in
-  the same session.
+  the same session. For a Pi-side cheat sheet, see [COMMANDS.md](COMMANDS.md).
 - The Mega is silent unless it's booting, responding to you, or
   `verbose on` is active.
 - Close the Pi side before reflashing -- only one process can own the
