@@ -1,7 +1,8 @@
 vision_node:
   ros__parameters:
     model_path: "/models/best_small.pt"
-    confidence_threshold: 0.5
+    # Lower if small/distant flame never registers (try 0.2–0.35). Brain uses its own threshold too.
+    confidence_threshold: 0.25
     inference_imgsz: 512
     max_det: 3
     fire_only: true
@@ -17,7 +18,8 @@ vision_node:
 brain_node:
   ros__parameters:
     # --- detection ---
-    confidence_threshold: 0.5
+    # Should be <= vision_node confidence for the same bbox to count as "fire".
+    confidence_threshold: 0.25
     stable_frames: 5
     center_offset_thresh: 0.08
     # Approach stop: fire centered and bbox_area in [min, max] (fraction of frame).

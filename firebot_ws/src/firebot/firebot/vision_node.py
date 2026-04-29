@@ -137,7 +137,10 @@ class VisionNode(Node):
             return
         try:
             self.model = YOLO(self.model_path)
-            self.get_logger().info(f'YOLO model loaded: {self.model_path}')
+            names = getattr(self.model, 'names', None)
+            self.get_logger().info(
+                f'YOLO model loaded: {self.model_path}; class names: {dict(names) if names else "?"}'
+            )
         except Exception as exc:
             self.get_logger().warn(f'YOLO model load failed: {exc}')
 
@@ -148,7 +151,10 @@ class VisionNode(Node):
             return self.camera.capture_array()
         if isinstance(self.camera, cv2.VideoCapture):
             ok, frame = self.camera.read()
-            return frame if ok else None
+            if not ok or frame is None:
+                return None
+            # V4L/OpenCV uses BGR; Picamera2 is RGB. Ultralytics expects RGB ndarray.
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return None
 
     def _publish_empty(self):
