@@ -7,6 +7,9 @@ services:
     privileged: true
     environment:
       - ROS_DOMAIN_ID=0
+      # Host Pi test uses Picamera2 natively; Picamera2 inside this Ubuntu image often
+      # opens but feeds wrong/stale frames on a Debian host. V4L is usually reliable.
+      - FIREBOT_OPENCV_ONLY=1
     volumes:
       - ../models:/models
     devices:
@@ -28,6 +31,7 @@ services:
       - dev
     environment:
       - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=1
     volumes:
       - ../firebot_ws/src:/firebot_ws/src
       - ../models:/models

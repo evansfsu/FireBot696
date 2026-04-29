@@ -23,6 +23,7 @@ try:
 except ImportError:
     YOLO_AVAILABLE = False
 
+import os
 import time
 
 import cv2
@@ -47,6 +48,8 @@ class VisionNode(Node):
         self.declare_parameter('picamera_warmup_sec', 1.0)
         # OpenCV fallback: explicit path helps Docker (compose mounts /dev/video0). Use "" for index 0.
         self.declare_parameter('opencv_video_device', '')
+        # When true, never use Picamera2 (use after Docker pulls stale/wrong Picamera2 frames).
+        self.declare_parameter('opencv_only', False)
 
         self.model_path = self.get_parameter('model_path').value
         self.conf_threshold = float(self.get_parameter('confidence_threshold').value)
@@ -63,9 +66,13 @@ class VisionNode(Node):
         self.opencv_video_device = str(
             self.get_parameter('opencv_video_device').value or ''
         ).strip()
+        self.opencv_only = bool(self.get_parameter('opencv_only').value)
+        if os.environ.get('FIREBOT_OPENCV_ONLY', '').strip().lower() in ('1', 'true', 'yes'):
+            self.opencv_only = True
 
         self._last_no_frame_log = 0.0
         self._last_filtered_log = 0.0
+        self._last_nobox_log = 0.0
 
         self.pub = self.create_publisher(FireDetection, '/fire/detection', 10)
         self.pub_debug = (
@@ -73,6 +80,11 @@ class VisionNode(Node):
             if self.publish_debug
             else None
         )
+
+        if self.opencv_only:
+            self.get_logger().info(
+                'opencv_only / FIREBOT_OPENCV_ONLY: skipping Picamera2 (V4L path only)'
+            )
 
         self._init_camera()
         self._init_model()
@@ -116,9 +128,46 @@ class VisionNode(Node):
         msg.data = vis.tobytes()
         self.pub_debug.publish(msg)
 
+    def _open_v4l_capture(self):
+        """Open V4L device; Pi libcamera bridge often works best with MJPG."""
+        dev = self.opencv_video_device
+        caps = []
+        if dev.isdigit():
+            caps.append((cv2.VideoCapture(int(dev), cv2.CAP_V4L2), dev))
+        elif dev:
+            caps.append((cv2.VideoCapture(dev, cv2.CAP_V4L2), dev))
+        else:
+            caps.append((cv2.VideoCapture(0, cv2.CAP_V4L2), '0'))
+
+        fourcc_attempts = (
+            cv2.VideoWriter_fourcc(*'MJPG'),
+            cv2.VideoWriter_fourcc(*'YUYV'),
+        )
+        for cap, dev_log in caps:
+            if not cap.isOpened():
+                cap.release()
+                continue
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            for fcc in fourcc_attempts:
+                cap.set(cv2.CAP_PROP_FOURCC, fcc)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cam_w)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cam_h)
+                ok, test = cap.read()
+                if ok and test is not None and test.size > 0:
+                    self.get_logger().info(
+                        f'OpenCV V4L opened (device {dev_log}, '
+                        f'frame {test.shape[1]}x{test.shape[0]}, mean={float(test.mean()):.1f})'
+                    )
+                    return cap
+            cap.release()
+        return None
+
     def _init_camera(self):
         self.camera = None
-        if PICAMERA_AVAILABLE:
+        if PICAMERA_AVAILABLE and not self.opencv_only:
             try:
                 cam = Picamera2()
                 size = (self.cam_w, self.cam_h)
@@ -145,24 +194,10 @@ class VisionNode(Node):
             except Exception as exc:
                 self.get_logger().warn(f'picamera2 init failed: {exc}')
                 self.camera = None
-        dev = self.opencv_video_device
-        if dev.isdigit():
-            cap = cv2.VideoCapture(int(dev), cv2.CAP_V4L2)
-            dev_log = dev
-        else:
-            cap = cv2.VideoCapture(dev, cv2.CAP_V4L2) if dev else cv2.VideoCapture(0, cv2.CAP_V4L2)
-            dev_log = dev or '0'
-        if cap.isOpened():
-            try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            except Exception:
-                pass
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cam_w)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cam_h)
+        cap = self._open_v4l_capture()
+        if cap is not None:
             self.camera = cap
-            self.get_logger().info(f'OpenCV V4L fallback opened (device {dev_log})')
         else:
-            cap.release()
             self.get_logger().warn(
                 'no camera available; vision_node will keep running and '
                 'publish detected=False'
@@ -186,7 +221,12 @@ class VisionNode(Node):
         if self.camera is None:
             return None
         if PICAMERA_AVAILABLE and isinstance(self.camera, Picamera2):
-            return self.camera.capture_array()
+            arr = self.camera.capture_array()
+            if arr is None:
+                return None
+            if arr.ndim == 3 and arr.shape[2] == 4:
+                return cv2.cvtColor(arr, cv2.COLOR_RGBA2RGB)
+            return arr
         if isinstance(self.camera, cv2.VideoCapture):
             ok, frame = self.camera.read()
             if not ok or frame is None:
@@ -255,6 +295,16 @@ class VisionNode(Node):
                         f'"{self.fire_class_name}"; set fire_class_name or fire_only: false to match weights'
                     )
                     self._last_filtered_log = now
+            else:
+                now = time.monotonic()
+                if now - self._last_nobox_log >= 8.0:
+                    self.get_logger().info(
+                        f'YOLO: no boxes above conf={self.conf_threshold} '
+                        f'(frame mean={float(frame.mean()):.1f}); '
+                        'lower vision confidence_threshold, set fire_only false to debug, '
+                        'or FIREBOT_OPENCV_ONLY=1 if Docker Picamera2 frames look wrong'
+                    )
+                    self._last_nobox_log = now
             return
 
         h, w = frame.shape[:2]

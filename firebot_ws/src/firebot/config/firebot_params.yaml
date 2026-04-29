@@ -14,6 +14,8 @@ vision_node:
     picamera_warmup_sec: 1.0
     # V4L fallback when picamera2 fails in Docker; "" = OpenCV index 0.
     opencv_video_device: "/dev/video0"
+    # If true, never use Picamera2 (same as env FIREBOT_OPENCV_ONLY=1).
+    opencv_only: false
     # Match ~1–3 FPS on Pi + YOLO; brain motion is tuned for low-rate detections.
     detection_fps: 3.0
     # When true, publishes sensor_msgs/Image on /fire/debug_image (BGR, boxes) for
