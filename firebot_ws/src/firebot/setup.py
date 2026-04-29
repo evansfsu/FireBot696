@@ -29,6 +29,7 @@ setup(
             'firebot = firebot.firebot_cli:main',
             'picam_yolo_publisher = firebot.picam_yolo_publisher:main',
             'udp_detection_bridge_node = firebot.udp_detection_bridge_node:main',
+            'rotation_center_test_node = firebot.rotation_center_test_node:main',
         ],
     },
 )
