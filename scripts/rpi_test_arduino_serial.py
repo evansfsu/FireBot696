@@ -258,28 +258,37 @@ def cmd_status(args, send, read_for) -> None:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--version", action="store_true", help="print script revision and exit")
-    p.add_argument("--port", default="/dev/ttyACM0")
-    p.add_argument("--baud", type=int, default=115200)
-    p.add_argument("--settle", type=float, default=2.5, help="seconds after open (Mega reset)")
-    p.add_argument(
+    serial_parent = argparse.ArgumentParser(add_help=False)
+    serial_parent.add_argument("--port", default="/dev/ttyACM0")
+    serial_parent.add_argument("--baud", type=int, default=115200)
+    serial_parent.add_argument(
+        "--settle", type=float, default=2.5, help="seconds after open (Mega reset)"
+    )
+    serial_parent.add_argument(
         "--no-wait-ready",
         action="store_true",
         help="do not wait for L,firebot_mega_ready after open",
     )
-    p.add_argument(
+    serial_parent.add_argument(
         "--ready-timeout",
         type=float,
         default=5.0,
         help="max seconds to wait for boot banner",
     )
+
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Serial options (--port, --baud, …) go after the subcommand, e.g.  "
+        "%(prog)s go --port /dev/ttyACM0 --wait-s 35",
+    )
+    p.add_argument("--version", action="store_true", help="print script revision and exit")
     p.add_argument("--dry-run", action="store_true", help="print actions only, no USB/serial")
 
     sub = p.add_subparsers(dest="command")
 
     s = sub.add_parser(
         "motors",
+        parents=[serial_parent],
         help="drive test only: forward then spin (M commands); safe if stepper/solenoid unwired",
     )
     s.add_argument("--vx", type=int, default=75, help="forward PWM (bench sketch uses 75)")
@@ -300,43 +309,61 @@ def main() -> int:
 
     s = sub.add_parser(
         "smoke",
+        parents=[serial_parent],
         help="legacy: short spin then R estop (use `motors` for a normal drive check)",
     )
     s.add_argument("--spin-speed", type=int, default=75, help="wz for M,0,0,wz")
     s.add_argument("--spin-ms", type=int, default=1500, help="spin duration (ms)")
     s.set_defaults(func=cmd_smoke)
 
-    s = sub.add_parser("spin", help="in-place spin with watchdog keepalive")
+    s = sub.add_parser(
+        "spin", parents=[serial_parent], help="in-place spin with watchdog keepalive"
+    )
     s.add_argument("--wz", type=int, default=75)
     s.add_argument("--ms", type=int, default=2000, help="total spin time (ms)")
     s.set_defaults(func=cmd_spin)
 
-    s = sub.add_parser("drive", help="skid-steer: vx forward/back, wz yaw")
+    s = sub.add_parser(
+        "drive", parents=[serial_parent], help="skid-steer: vx forward/back, wz yaw"
+    )
     s.add_argument("--vx", type=int, default=0)
     s.add_argument("--wz", type=int, default=0)
     s.add_argument("--ms", type=int, default=2000)
     s.set_defaults(func=cmd_drive)
 
-    s = sub.add_parser("advance", help="E,2 lead-screw forward (~5.3 s in firmware)")
+    s = sub.add_parser(
+        "advance",
+        parents=[serial_parent],
+        help="E,2 lead-screw forward (~5.3 s in firmware)",
+    )
     s.add_argument("--wait-s", type=float, default=6.0, help="sleep after E,2 before E,0")
     s.set_defaults(func=cmd_advance)
 
-    s = sub.add_parser("retract", help="E,3 lead-screw reverse (~5.3 s)")
+    s = sub.add_parser(
+        "retract", parents=[serial_parent], help="E,3 lead-screw reverse (~5.3 s)"
+    )
     s.add_argument("--wait-s", type=float, default=6.0)
     s.set_defaults(func=cmd_retract)
 
-    s = sub.add_parser("go", help="human 'go' = full bench solenoid+stepper sequence")
+    s = sub.add_parser(
+        "go",
+        parents=[serial_parent],
+        help="human 'go' = full bench solenoid+stepper sequence",
+    )
     s.add_argument("--wait-s", type=float, default=25.0, help="how long to drain serial after")
     s.set_defaults(func=cmd_go)
 
-    s = sub.add_parser("estop", help="send R")
+    s = sub.add_parser("estop", parents=[serial_parent], help="send R")
     s.set_defaults(func=cmd_estop)
 
-    s = sub.add_parser("status", help="send S and print reply window")
+    s = sub.add_parser(
+        "status", parents=[serial_parent], help="send S and print reply window"
+    )
     s.set_defaults(func=cmd_status)
 
     s = sub.add_parser(
         "probe",
+        parents=[serial_parent],
         help="open serial, wait for boot banner, send S — use this if motors do nothing",
     )
     s.set_defaults(func=cmd_probe)
@@ -364,6 +391,11 @@ def main() -> int:
             ("spin_ms", 2000),
             ("minimal_protocol", False),
             ("with_estop", False),
+            ("port", "/dev/ttyACM0"),
+            ("baud", 115200),
+            ("settle", 2.5),
+            ("no_wait_ready", False),
+            ("ready_timeout", 5.0),
         ):
             if not hasattr(args, key):
                 setattr(args, key, val)
