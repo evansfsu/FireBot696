@@ -28,6 +28,7 @@ setup(
             'arduino_bridge_node = firebot.arduino_bridge_node:main',
             'firebot = firebot.firebot_cli:main',
             'picam_yolo_publisher = firebot.picam_yolo_publisher:main',
+            'udp_detection_bridge_node = firebot.udp_detection_bridge_node:main',
         ],
     },
 )

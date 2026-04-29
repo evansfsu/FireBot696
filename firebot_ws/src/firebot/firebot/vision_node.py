@@ -25,6 +25,7 @@ except ImportError:
 
 import glob
 import os
+import re
 import time
 
 import cv2
@@ -87,6 +88,12 @@ class VisionNode(Node):
             self.get_logger().info(
                 'opencv_only / FIREBOT_OPENCV_ONLY: skipping Picamera2 (V4L path only)'
             )
+        elif not PICAMERA_AVAILABLE:
+            self.get_logger().warn(
+                'python3-picamera2 is not importable in this process; falling back to V4L only '
+                '(rebuild image on arm64 with python3-picamera2, or use '
+                'docker/compose.picam-sidecar.yml)'
+            )
 
         self._init_camera()
         self._init_model()
@@ -131,33 +138,52 @@ class VisionNode(Node):
         self.pub_debug.publish(msg)
 
     def _v4l_device_paths(self):
-        """Paths to try. Host CSI stack may use only Picamera2 (no /dev/video*); USB cams need V4L."""
+        """Prefer an explicit path first, then try every /dev/video* (Pi libcamera uses many nodes)."""
         dev = self.opencv_video_device.strip()
+        raw = sorted(glob.glob('/dev/video*'))
+
+        def _vid_num(p: str) -> int:
+            m = re.search(r'video(\d+)$', p)
+            return int(m.group(1)) if m else -1
+
+        by_num = sorted(raw, key=_vid_num)
+        out = []
+        seen = set()
         if dev:
-            return [dev]
-        paths = sorted(glob.glob('/dev/video*'))
-        if paths:
-            return paths
-        return ['/dev/video0', '/dev/video1']
+            if dev not in seen:
+                out.append(dev)
+                seen.add(dev)
+        for p in by_num:
+            if p not in seen:
+                out.append(p)
+                seen.add(p)
+        if not out:
+            out = ['/dev/video0', '/dev/video1']
+        return out
 
     def _warm_grab(self, cap, n=10):
         for _ in range(max(1, n)):
             cap.read()
 
+    def _try_read_cap(self, cap, dev_log, bname, tag: str) -> bool:
+        self._warm_grab(cap, 12)
+        ok, test = cap.read()
+        if ok and test is not None and test.size > 0:
+            self.get_logger().info(
+                f'OpenCV V4L OK ({dev_log}, {bname}, {tag}): '
+                f'{test.shape[1]}x{test.shape[0]} mean={float(test.mean()):.1f}'
+            )
+            return True
+        return False
+
     def _open_v4l_capture(self):
-        """Open V4L — try several backends and pixel formats (headless OpenCV varies by build)."""
+        """Open V4L — try several backends, minimal ioctls first (avoids VIDIOC_STREAMON on wrong node)."""
         paths = self._v4l_device_paths()
-        self.get_logger().info(f'V4L: trying devices {paths}')
+        self.get_logger().info(f'V4L: trying {len(paths)} devices (ordered); first choice={paths[0]!r}')
 
         backends = (
             ('V4L2', lambda p: cv2.VideoCapture(p, cv2.CAP_V4L2)),
             ('default', lambda p: cv2.VideoCapture(p)),
-        )
-        fourcc_attempts = (
-            None,
-            cv2.VideoWriter_fourcc(*'MJPG'),
-            cv2.VideoWriter_fourcc(*'YUYV'),
-            cv2.VideoWriter_fourcc(*'YUY2'),
         )
 
         for path in paths:
@@ -170,30 +196,44 @@ class VisionNode(Node):
                 if not cap.isOpened():
                     cap.release()
                     continue
+                # 1) Minimal: do not touch FOURCC/size (many libcamera nodes reject STREAMON after wrong fmt)
                 try:
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 except Exception:
                     pass
+                if self._try_read_cap(cap, dev_log, bname, 'minimal'):
+                    return cap
+                cap.release()
+
+                cap = factory(p_open)
+                if not cap.isOpened():
+                    cap.release()
+                    continue
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                fourcc_attempts = (
+                    None,
+                    cv2.VideoWriter_fourcc(*'MJPG'),
+                    cv2.VideoWriter_fourcc(*'YUYV'),
+                    cv2.VideoWriter_fourcc(*'YUY2'),
+                )
                 for fcc in fourcc_attempts:
                     if fcc is not None:
                         cap.set(cv2.CAP_PROP_FOURCC, fcc)
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cam_w)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cam_h)
-                    self._warm_grab(cap, 10)
-                    ok, test = cap.read()
-                    if ok and test is not None and test.size > 0:
-                        fccn = 'native' if fcc is None else 'fourcc'
-                        self.get_logger().info(
-                            f'OpenCV V4L OK ({dev_log}, {bname}, {fccn}): '
-                            f'{test.shape[1]}x{test.shape[0]} mean={float(test.mean()):.1f}'
-                        )
+                    fccn = 'native' if fcc is None else 'fourcc'
+                    if self._try_read_cap(cap, dev_log, bname, fccn):
                         return cap
                 cap.release()
 
+        vis = sorted(glob.glob('/dev/video*'))
         self.get_logger().error(
-            'V4L: no frame from any device. CSI cameras often need Picamera2, not OpenCV. '
-            '`ls -la /dev/video*` on the host. In container: '
-            f'In container now: {sorted(glob.glob("/dev/video*"))}'
+            'V4L: no frames from any device. On Pi CSI prefer Picamera2 '
+            f'(see vision_node startup warnings) or docker/compose.picam-sidecar.yml. '
+            f'/dev/video* in container ({len(vis)} nodes): {vis[:12]}{"..." if len(vis) > 12 else ""}'
         )
         return None
 

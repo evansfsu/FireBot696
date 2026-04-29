@@ -12,7 +12,8 @@ vision_node:
     # Same as scripts/rpi_test_yolo_fire.py --video-mode (still stream is often stale in a timer loop).
     picamera_video_mode: true
     picamera_warmup_sec: 1.0
-    # V4L fallback when picamera2 fails in Docker; "" = OpenCV index 0.
+    # V4L fallback: optional preferred node (tried first), then every /dev/video* in numeric order.
+    # Pinning only /dev/video0 often hits a non-capture node on Pi libcamera (STREAMON EINVAL).
     opencv_video_device: "/dev/video0"
     # If true, never use Picamera2 (same as env FIREBOT_OPENCV_ONLY=1).
     opencv_only: false

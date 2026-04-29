@@ -15,6 +15,10 @@ Usage:
   python3 scripts/rpi_test_yolo_fire.py --model models/best_small.pt --width 1280 --height 720
   python3 scripts/rpi_test_yolo_fire.py --ros   # must: source install/setup.bash
 
+  python3 scripts/rpi_test_yolo_fire.py --udp-bridge 127.0.0.1:7766 --video-mode
+
+Docker stack: FIREBOT_UDP_DETECTION_PORT=7766 (see docker/compose.host-vision-udp.yml).
+
 Headless (SSH, no DISPLAY): omit OpenCV window; prints detection line each infer.
 
 With --ros and a window (local desktop / VNC), while brain_node runs:
@@ -30,11 +34,60 @@ Requires: picamera2, ultralytics, opencv-python (headless or full). ROS: rclpy +
 from __future__ import annotations
 
 import argparse
+import json
+import socket
 import sys
 import time
 from pathlib import Path
 
 DEFAULT_MODEL = Path(__file__).resolve().parent.parent / "models" / "best_small.pt"
+
+
+def _fire_detection_udp_dict(frame_rgb, last_result, model) -> dict:
+    """Normalized bbox fields matching vision_node /fire/detection."""
+    h, w = frame_rgb.shape[:2]
+    base = {
+        "detected": False,
+        "confidence": 0.0,
+        "bbox_x": 0.0,
+        "bbox_y": 0.0,
+        "bbox_w": 0.0,
+        "bbox_h": 0.0,
+        "bbox_area": 0.0,
+        "x_offset": 0.0,
+        "label": "",
+    }
+    if last_result is None or last_result.boxes is None or len(last_result.boxes) == 0:
+        return base
+    best_i = 0
+    best_c = -1.0
+    for i in range(len(last_result.boxes)):
+        c = float(last_result.boxes.conf[i])
+        if c > best_c:
+            best_c = c
+            best_i = i
+    row = last_result.boxes.xyxy[best_i]
+    x1, y1, x2, y2 = [float(t) for t in row.tolist()]
+    cls_id = int(last_result.boxes.cls[best_i])
+    label = model.names.get(cls_id, "unknown")
+    cx = (x1 + x2) * 0.5 / w
+    cy = (y1 + y2) * 0.5 / h
+    bw = (x2 - x1) / w
+    bh = (y2 - y1) / h
+    base.update(
+        {
+            "detected": True,
+            "confidence": best_c,
+            "bbox_x": cx,
+            "bbox_y": cy,
+            "bbox_w": bw,
+            "bbox_h": bh,
+            "bbox_area": bw * bh,
+            "x_offset": (cx - 0.5) * 2.0,
+            "label": str(label),
+        }
+    )
+    return base
 
 
 def main() -> int:
@@ -54,10 +107,33 @@ def main() -> int:
     p.add_argument("--fire-class-name", default="Fire", help="case-sensitive label when --fire-only")
     p.add_argument("--headless", action="store_true", help="no imshow window")
     p.add_argument("--ros", action="store_true", help="enable keyboard ROS publisher (see docstring)")
+    p.add_argument(
+        "--udp-bridge",
+        metavar="HOST:PORT",
+        default=None,
+        help="send FireDetection JSON to Docker udp_detection_bridge (host networking), "
+        "e.g. 127.0.0.1:7766 with FIREBOT_UDP_DETECTION_PORT=7766",
+    )
     args = p.parse_args()
 
     if args.all_classes:
         args.fire_only = False
+
+    udp_sock = None
+    udp_addr = None
+    if args.udp_bridge:
+        if ":" not in args.udp_bridge:
+            print("--udp-bridge must be HOST:PORT", file=sys.stderr)
+            return 1
+        uhost, uport_s = args.udp_bridge.rsplit(":", 1)
+        try:
+            uport = int(uport_s)
+        except ValueError:
+            print(f"bad UDP port: {uport_s!r}", file=sys.stderr)
+            return 1
+        udp_addr = (uhost, uport)
+        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        print(f"[UDP] FireDetection → {uhost}:{uport} (start Docker with FIREBOT_UDP_DETECTION_PORT={uport})", flush=True)
 
     try:
         from picamera2 import Picamera2
@@ -183,6 +259,13 @@ def main() -> int:
             shown = last_annotated.copy() if last_annotated is not None else frame.copy()
 
             n = 0 if last_result is None or last_result.boxes is None else len(last_result.boxes)
+
+            if udp_sock is not None:
+                pkt = _fire_detection_udp_dict(frame, last_result, model)
+                try:
+                    udp_sock.sendto(json.dumps(pkt).encode('utf-8'), udp_addr)
+                except OSError:
+                    pass
 
             for text, y in (
                 (f"Display FPS: {display_fps:.1f}", 32),
