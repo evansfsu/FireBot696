@@ -23,6 +23,7 @@ try:
 except ImportError:
     YOLO_AVAILABLE = False
 
+import glob
 import os
 import time
 
@@ -128,41 +129,71 @@ class VisionNode(Node):
         msg.data = vis.tobytes()
         self.pub_debug.publish(msg)
 
-    def _open_v4l_capture(self):
-        """Open V4L device; Pi libcamera bridge often works best with MJPG."""
-        dev = self.opencv_video_device
-        caps = []
-        if dev.isdigit():
-            caps.append((cv2.VideoCapture(int(dev), cv2.CAP_V4L2), dev))
-        elif dev:
-            caps.append((cv2.VideoCapture(dev, cv2.CAP_V4L2), dev))
-        else:
-            caps.append((cv2.VideoCapture(0, cv2.CAP_V4L2), '0'))
+    def _v4l_device_paths(self):
+        """Paths to try. Host CSI stack may use only Picamera2 (no /dev/video*); USB cams need V4L."""
+        dev = self.opencv_video_device.strip()
+        if dev:
+            return [dev]
+        paths = sorted(glob.glob('/dev/video*'))
+        if paths:
+            return paths
+        return ['/dev/video0', '/dev/video1']
 
+    def _warm_grab(self, cap, n=10):
+        for _ in range(max(1, n)):
+            cap.read()
+
+    def _open_v4l_capture(self):
+        """Open V4L — try several backends and pixel formats (headless OpenCV varies by build)."""
+        paths = self._v4l_device_paths()
+        self.get_logger().info(f'V4L: trying devices {paths}')
+
+        backends = (
+            ('V4L2', lambda p: cv2.VideoCapture(p, cv2.CAP_V4L2)),
+            ('default', lambda p: cv2.VideoCapture(p)),
+        )
         fourcc_attempts = (
+            None,
             cv2.VideoWriter_fourcc(*'MJPG'),
             cv2.VideoWriter_fourcc(*'YUYV'),
+            cv2.VideoWriter_fourcc(*'YUY2'),
         )
-        for cap, dev_log in caps:
-            if not cap.isOpened():
-                cap.release()
+
+        for path in paths:
+            if not path.isdigit() and not os.path.exists(path):
                 continue
-            try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            except Exception:
-                pass
-            for fcc in fourcc_attempts:
-                cap.set(cv2.CAP_PROP_FOURCC, fcc)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cam_w)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cam_h)
-                ok, test = cap.read()
-                if ok and test is not None and test.size > 0:
-                    self.get_logger().info(
-                        f'OpenCV V4L opened (device {dev_log}, '
-                        f'frame {test.shape[1]}x{test.shape[0]}, mean={float(test.mean()):.1f})'
-                    )
-                    return cap
-            cap.release()
+            p_open = int(path) if path.isdigit() else path
+            dev_log = path
+            for bname, factory in backends:
+                cap = factory(p_open)
+                if not cap.isOpened():
+                    cap.release()
+                    continue
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                for fcc in fourcc_attempts:
+                    if fcc is not None:
+                        cap.set(cv2.CAP_PROP_FOURCC, fcc)
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cam_w)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cam_h)
+                    self._warm_grab(cap, 10)
+                    ok, test = cap.read()
+                    if ok and test is not None and test.size > 0:
+                        fccn = 'native' if fcc is None else 'fourcc'
+                        self.get_logger().info(
+                            f'OpenCV V4L OK ({dev_log}, {bname}, {fccn}): '
+                            f'{test.shape[1]}x{test.shape[0]} mean={float(test.mean()):.1f}'
+                        )
+                        return cap
+                cap.release()
+
+        self.get_logger().error(
+            'V4L: no frame from any device. CSI cameras often need Picamera2, not OpenCV. '
+            '`ls -la /dev/video*` on the host. In container: '
+            f'In container now: {sorted(glob.glob("/dev/video*"))}'
+        )
         return None
 
     def _init_camera(self):
@@ -199,8 +230,9 @@ class VisionNode(Node):
             self.camera = cap
         else:
             self.get_logger().warn(
-                'no camera available; vision_node will keep running and '
-                'publish detected=False'
+                'no camera available; vision_node will keep publishing detected=False. '
+                'CSI + Docker: prefer Picamera2 (FIREBOT_OPENCV_ONLY unset) or '
+                'run scripts/host_picam_yolo_publisher.py on the host with FIREBOT_SKIP_VISION=1.'
             )
 
     def _init_model(self):
