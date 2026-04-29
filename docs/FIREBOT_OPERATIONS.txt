@@ -1,0 +1,209 @@
+FireBot696 — operations cheat sheet (compose, rebuild, live tuning, logging)
+==============================================================================
+
+Assumptions
+-----------
+  - Paths are from the **repo root** (directory that contains `docker/` and `scripts/`).
+  - Robot stack is ROS 2 **Humble** inside Docker unless you installed ROS on the host.
+  - Default DDS: **ROS_DOMAIN_ID=0** (set in compose; match on host if you run `ros2` outside Docker).
+  - Default UDP detections port: **7766** (override with env **FIREBOT_UDP_DETECTION_PORT**).
+
+
+==============================================================================
+1) USEFUL STACK COMBINATIONS (Docker)
+==============================================================================
+
+All of these start from:
+
+  cd docker
+
+Base file is always **docker-compose.yml**. Merge **one** extra compose file (or use defaults in it).
+
+A) Simple mission + host YOLO over UDP (continuous seek by default)
+   - Compose:  docker-compose.yml  +  compose.host-vision-udp-simple.yml
+   - Up:       docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml up -d
+   - Host:     python3 ../scripts/rpi_test_yolo_fire.py --video-mode --udp-bridge 127.0.0.1:7766
+   - One-liner from repo root: ./scripts/run_simple_mission_hostvision.sh
+     (starts compose detached, then runs host vision in the foreground)
+
+B) Same as (A) but brain launch uses **pulse** seek/track
+   - Compose:  docker-compose.yml  +  compose.host-vision-udp-simple-pulse.yml
+   - Up:       docker compose -f docker-compose.yml -f compose.host-vision-udp-simple-pulse.yml up -d
+   - Host vision: same UDP command as (A); change port if you set FIREBOT_UDP_DETECTION_PORT
+
+C) Host vision UDP + **full** brain/vision integration (see compose file header)
+   - Compose:  docker-compose.yml  +  compose.host-vision-udp.yml
+   - Up:       docker compose -f docker-compose.yml -f compose.host-vision-udp.yml up -d --build
+
+D) Host vision UDP + **rotation_center_test** only (no brain_node)
+   - Compose:  docker-compose.yml  +  compose.host-vision-udp-rotation.yml
+   - Up:       docker compose -f docker-compose.yml -f compose.host-vision-udp-rotation.yml up -d --build
+   - Host:     same UDP bridge as (A)
+
+E) Dev profile: rebuild workspace on container start, then launch simple mission
+   - Use compose merge from (A) or (B), then:
+     docker compose --profile dev -f docker-compose.yml -f compose.host-vision-udp-simple.yml up -d
+   - Service **firebot-dev** runs colcon build then the launch (slower startup; use when editing Python).
+
+
+==============================================================================
+2) NATIVE ROS (no Docker) — if ROS is installed on the Pi host
+==============================================================================
+
+  cd firebot_ws
+  source /opt/ros/humble/setup.bash
+  colcon build --symlink-install
+  source install/setup.bash
+
+Examples:
+
+  ros2 launch firebot simple_mission_hostvision.launch.py
+  ros2 launch firebot simple_mission_hostvision_pulse.launch.py
+
+Host vision still runs separately:
+
+  python3 scripts/rpi_test_yolo_fire.py --video-mode --udp-bridge 127.0.0.1:7766
+
+Use the **same ROS_DOMAIN_ID** as the nodes (usually 0).
+
+
+==============================================================================
+3) RE-SETUP / CLEAN START
+==============================================================================
+
+From repo root (git pull, etc.):
+
+  git pull
+  # If submodules are used elsewhere in your workflow, sync them here.
+
+Docker stack down (does not delete images):
+
+  cd docker
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml down
+
+Optional cleanup (only if you know you want it — removes unused images/containers):
+
+  docker system prune
+
+Recreate containers after editing Dockerfile or when dependencies change:
+
+  cd docker
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml up -d --force-recreate
+
+
+==============================================================================
+4) REBUILD (image + ROS workspace)
+==============================================================================
+
+Rebuild **image** then start (typical after Dockerfile or dependency changes):
+
+  cd docker
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml build --no-cache
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml up -d
+
+Single command (build if needed, then up):
+
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml up -d --build
+
+Rebuild **workspace only** inside a running dev container (after Python changes):
+
+  cd docker
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml exec firebot-dev bash -lc \
+    "cd /firebot_ws && source /opt/ros/humble/setup.bash && colcon build --symlink-install && source install/setup.bash"
+
+Or rely on **firebot-dev** service (profile dev) to colcon build on each start.
+
+After changing **Arduino** firmware (firebot_mega): rebuild/flash in Arduino IDE or your usual flow; Docker does not reflash the Mega.
+
+
+==============================================================================
+5) LIVE TUNING (no restart) — brain_node parameters
+==============================================================================
+
+Requires a **brain_node** built with runtime param reload (callbacks). Then:
+
+  ros2 param set /brain_node <param> <value>
+
+If ROS runs only inside Docker, run `ros2` via exec (from `docker/`):
+
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml exec firebot \
+    ros2 param set /brain_node rotate_speed 40.0
+
+Helper script from **repo root** (wraps the above when FIREBOT_USE_DOCKER=1):
+
+  FIREBOT_USE_DOCKER=1 ./scripts/firebot_brain_tune.sh help
+  FIREBOT_USE_DOCKER=1 ./scripts/firebot_brain_tune.sh status
+  FIREBOT_USE_DOCKER=1 ./scripts/firebot_brain_tune.sh mode pulse
+  FIREBOT_USE_DOCKER=1 ./scripts/firebot_brain_tune.sh rotate 0.35
+  FIREBOT_USE_DOCKER=1 ./scripts/firebot_brain_tune.sh speed 40
+
+If your stack uses the **pulse** compose merge, point the script at the same files:
+
+  FIREBOT_USE_DOCKER=1 \
+  FIREBOT_COMPOSE_FILES="-f docker-compose.yml -f compose.host-vision-udp-simple-pulse.yml" \
+  ./scripts/firebot_brain_tune.sh status
+
+Windows (PowerShell), same idea:
+
+  $env:FIREBOT_USE_DOCKER = "1"
+  .\scripts\firebot_brain_tune.ps1 mode pulse
+
+Useful parameter names (see also firebot_params.yaml):
+
+  simple_seek_mode              continuous | pulse
+  simple_pulse_rotate_sec       burst on time (seconds)
+  simple_pulse_rest_sec         gap between bursts
+  simple_pulse_min_interval_sec min time between burst starts
+  rotate_speed                  seek/track yaw command (bridge scales to motors)
+  v_approach                    forward PWM in full APPROACHING flow
+  kp_yaw                        yaw gain in approach
+  corner_exit_speed             first straight segment when entering SEARCHING
+  simple_pulse_seek_alternate   true | false
+
+Alarm (std_msgs/Bool):
+
+  ros2 topic pub --once /alarm/trigger std_msgs/msg/Bool "{data: true}"
+  ros2 topic pub --once /alarm/trigger std_msgs/msg/Bool "{data: false}"
+
+
+==============================================================================
+6) LOGGING — what to run and what to grep
+==============================================================================
+
+Follow container logs (replace compose merge to match how you started the stack):
+
+  cd docker
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml logs -f firebot
+
+Less noise — follow only new lines:
+
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml logs -f --tail 200 firebot
+
+Simple-mission progress lines are prefixed with **simple:** (brain_node).
+
+Other useful strings: **state:** , **brain_node up** , **search timeout** , **alarm**.
+
+From inside the container (interactive shell):
+
+  docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml exec firebot bash
+  source /opt/ros/humble/setup.bash
+  source /firebot_ws/install/setup.bash
+  ros2 topic echo /firebot/state
+  ros2 topic echo /fire/detection --no-arr
+  ros2 node list
+
+Log level: ROS 2 logger levels can be set per node; default is INFO for most messages.
+If you need more detail from a specific node, check ROS 2 docs for `--ros-args --log-level`.
+
+
+==============================================================================
+7) QUICK CHECKLIST AFTER A PULL
+==============================================================================
+
+  [ ] docker compose ... up -d --build   (or ./scripts/run_simple_mission_hostvision.sh for A)
+  [ ] Host vision running with matching UDP host/port
+  [ ] docker compose ... logs -f firebot  (see brain_node up + no crash loop)
+  [ ] Optional: FIREBOT_USE_DOCKER=1 ./scripts/firebot_brain_tune.sh status
+
+
+End of file.

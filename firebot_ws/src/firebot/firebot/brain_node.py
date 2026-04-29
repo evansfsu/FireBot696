@@ -33,9 +33,8 @@ Extra approach conditions via `approach_strategy`:
   * yolo_ultrasonic_ir     + KY-032 object detected
 """
 
-import math
-
-import rclpy
+from typing import Any, Dict, Iterable, Optional
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from std_msgs.msg import Bool, Int32, String
 from geometry_msgs.msg import Twist
@@ -87,6 +86,8 @@ class BrainNode(Node):
         self.declare_parameter('alarm_from_audio', False)
         self.declare_parameter('mic_alarm_threshold', 600)
         self.declare_parameter('mic_hold_ms', 500)
+        # When true and /alarm/trigger latched: SEARCHING does not time out (publish false to clear latch).
+        self.declare_parameter('alarm_inhibits_search_timeout', True)
 
         self.declare_parameter('approach_pulse_ms', 400)
         self.declare_parameter('approach_rest_ms', 600)
@@ -114,86 +115,7 @@ class BrainNode(Node):
         self.declare_parameter('simple_pulse_seek_alternate', True)
         self.declare_parameter('simple_pulse_seek_sign', 1.0)
 
-        self.conf_thresh = float(self.get_parameter('confidence_threshold').value)
-        self.stable_frames = int(self.get_parameter('stable_frames').value)
-        self.center_tol = float(self.get_parameter('center_offset_thresh').value)
-        self.bbox_area_min = float(self.get_parameter('approach_bbox_min_frac').value)
-        self.bbox_area_max = float(self.get_parameter('approach_bbox_max_frac').value)
-        self.approach_gate_min_sec = float(self.get_parameter('approach_gate_min_sec').value)
-        self.corner_exit_forward_sec = float(self.get_parameter('corner_exit_forward_sec').value)
-        self.corner_exit_speed = float(self.get_parameter('corner_exit_speed').value)
-        self.v_approach = float(self.get_parameter('v_approach').value)
-        self.kp_yaw = float(self.get_parameter('kp_yaw').value)
-        self.rot_speed = float(self.get_parameter('rotate_speed').value)
-        self.search_timeout = float(self.get_parameter('search_timeout_sec').value)
-        self.confirm_timeout = float(self.get_parameter('confirm_timeout_sec').value)
-        self.warning_secs = float(self.get_parameter('warning_seconds').value)
-        self.warning_secs = max(0.0, self.warning_secs)
-        self.discharge_secs = float(self.get_parameter('discharge_seconds').value)
-        self.ext_stepper_advance = float(self.get_parameter('ext_stepper_advance_sec').value)
-        self.ext_stepper_advance = max(0.5, min(120.0, self.ext_stepper_advance))
-        self.ext_stepper_dwell = float(self.get_parameter('ext_stepper_dwell_sec').value)
-        self.ext_stepper_dwell = max(0.0, min(120.0, self.ext_stepper_dwell))
-        self.ext_stepper_retract = float(self.get_parameter('ext_stepper_retract_sec').value)
-        self.ext_stepper_retract = max(0.5, min(120.0, self.ext_stepper_retract))
-        self.complete_hold = float(self.get_parameter('complete_hold_sec').value)
-
-        strat = str(self.get_parameter('approach_strategy').value)
-        if strat not in VALID_STRATEGIES:
-            self.get_logger().warn(
-                f'unknown approach_strategy {strat!r}; falling back to yolo_only'
-            )
-            strat = 'yolo_only'
-        self.approach_strategy = strat
-        self.approach_dist_cm = int(self.get_parameter('approach_distance_cm').value)
-        self.safety_stop_cm = int(self.get_parameter('safety_stop_cm').value)
-        self.alarm_from_audio = bool(self.get_parameter('alarm_from_audio').value)
-        self.mic_alarm_thresh = int(self.get_parameter('mic_alarm_threshold').value)
-        self.mic_hold_ms = int(self.get_parameter('mic_hold_ms').value)
-
-        self.approach_pulse_ms = int(self.get_parameter('approach_pulse_ms').value)
-        self.approach_rest_ms = int(self.get_parameter('approach_rest_ms').value)
-        self.approach_max_sec = float(self.get_parameter('approach_max_sec').value)
-
-        self.simple_mission_flow = bool(self.get_parameter('simple_mission_flow').value)
-        self.center_hold_before_warning = float(
-            self.get_parameter('center_hold_before_warning_sec').value
-        )
-        self.center_hold_before_warning = max(0.0, self.center_hold_before_warning)
-        self.idle_exit_min_fire = float(self.get_parameter('idle_exit_min_fire_sec').value)
-        self.idle_exit_min_fire = max(0.0, self.idle_exit_min_fire)
-        self.simple_fire_confirm_sec = float(self.get_parameter('simple_fire_confirm_sec').value)
-        self.simple_fire_confirm_sec = max(0.0, self.simple_fire_confirm_sec)
-        self.lost_fire_grace_sec = float(self.get_parameter('lost_fire_grace_sec').value)
-        self.lost_fire_grace_sec = max(0.0, self.lost_fire_grace_sec)
-        self.simple_search_timeout_override = float(
-            self.get_parameter('simple_search_timeout_sec').value
-        )
-        self._simple_log_period = float(
-            self.get_parameter('simple_progress_log_period_sec').value
-        )
-        self._simple_log_period = max(0.2, min(10.0, self._simple_log_period))
-        self.simple_mission_center_band = float(
-            self.get_parameter('simple_mission_center_band_frac').value
-        )
-        self.simple_mission_center_band = max(0.02, min(1.0, self.simple_mission_center_band))
-        mode = str(self.get_parameter('simple_seek_mode').value).strip().lower()
-        if mode not in ('continuous', 'pulse'):
-            mode = 'continuous'
-        self.simple_seek_mode = mode
-        self.simple_pulse_rotate = float(self.get_parameter('simple_pulse_rotate_sec').value)
-        self.simple_pulse_rotate = max(0.05, min(2.0, self.simple_pulse_rotate))
-        self.simple_pulse_rest = float(self.get_parameter('simple_pulse_rest_sec').value)
-        self.simple_pulse_rest = max(0.0, min(2.0, self.simple_pulse_rest))
-        self.simple_pulse_min_interval = float(
-            self.get_parameter('simple_pulse_min_interval_sec').value
-        )
-        self.simple_pulse_min_interval = max(0.0, min(60.0, self.simple_pulse_min_interval))
-        self.simple_pulse_seek_alternate = bool(
-            self.get_parameter('simple_pulse_seek_alternate').value
-        )
-        self.simple_pulse_seek_sign = float(self.get_parameter('simple_pulse_seek_sign').value)
-        self.simple_pulse_seek_sign = 1.0 if self.simple_pulse_seek_sign >= 0 else -1.0
+        self._load_parameters_from_declarations()
 
         self.drive_pub = self.create_publisher(Twist, '/cmd/drive', 10)
         self.ext_pub = self.create_publisher(Int32, '/cmd/extinguisher', 10)
@@ -236,6 +158,8 @@ class BrainNode(Node):
         self._simple_p_cmd = 0.0
         self._simple_p_seek_sign = self.simple_pulse_seek_sign
 
+        self.add_on_set_parameters_callback(self._on_parameters_set)
+
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
             f'brain_node up (strategy={self.approach_strategy}, '
@@ -247,11 +171,130 @@ class BrainNode(Node):
             f'simple_center_band=|x_off|<={self.simple_mission_center_band:.2f}, '
             f'simple_seek_mode={self.simple_seek_mode}, '
             f'search_timeout={self.search_timeout:.0f}s '
-            f'simple_search_cap={self._effective_search_timeout_sec():.0f}s)'
+            f'simple_search_cap={self._effective_search_timeout_sec():.0f}s '
+            f'alarm_inhibits_search_timeout={self.alarm_inhibits_search_timeout})'
         )
+
+    def _load_parameters_from_declarations(
+        self, incoming_params: Optional[Iterable] = None
+    ) -> None:
+        """Refresh cached fields from declared parameters.
+
+        When ``incoming_params`` is set (from ``add_on_set_parameters_callback``), those
+        values are used in place of the not-yet-updated parameter server snapshot.
+        """
+        incoming: Optional[Dict[str, Any]] = None
+        if incoming_params is not None:
+            incoming = {p.name: p.value for p in incoming_params}
+
+        def pv(name: str):
+            if incoming is not None and name in incoming:
+                return incoming[name]
+            return self.get_parameter(name).value
+
+        self.conf_thresh = float(pv('confidence_threshold'))
+        self.stable_frames = int(pv('stable_frames'))
+        self.center_tol = float(pv('center_offset_thresh'))
+        self.bbox_area_min = float(pv('approach_bbox_min_frac'))
+        self.bbox_area_max = float(pv('approach_bbox_max_frac'))
+        self.approach_gate_min_sec = float(pv('approach_gate_min_sec'))
+        self.corner_exit_forward_sec = float(pv('corner_exit_forward_sec'))
+        self.corner_exit_speed = float(pv('corner_exit_speed'))
+        self.v_approach = float(pv('v_approach'))
+        self.kp_yaw = float(pv('kp_yaw'))
+        self.rot_speed = float(pv('rotate_speed'))
+        self.search_timeout = float(pv('search_timeout_sec'))
+        self.confirm_timeout = float(pv('confirm_timeout_sec'))
+        self.warning_secs = float(pv('warning_seconds'))
+        self.warning_secs = max(0.0, self.warning_secs)
+        self.discharge_secs = float(pv('discharge_seconds'))
+        self.ext_stepper_advance = float(pv('ext_stepper_advance_sec'))
+        self.ext_stepper_advance = max(0.5, min(120.0, self.ext_stepper_advance))
+        self.ext_stepper_dwell = float(pv('ext_stepper_dwell_sec'))
+        self.ext_stepper_dwell = max(0.0, min(120.0, self.ext_stepper_dwell))
+        self.ext_stepper_retract = float(pv('ext_stepper_retract_sec'))
+        self.ext_stepper_retract = max(0.5, min(120.0, self.ext_stepper_retract))
+        self.complete_hold = float(pv('complete_hold_sec'))
+
+        strat = str(pv('approach_strategy'))
+        if strat not in VALID_STRATEGIES:
+            self.get_logger().warn(
+                f'unknown approach_strategy {strat!r}; falling back to yolo_only'
+            )
+            strat = 'yolo_only'
+        self.approach_strategy = strat
+        self.approach_dist_cm = int(pv('approach_distance_cm'))
+        self.safety_stop_cm = int(pv('safety_stop_cm'))
+        self.alarm_from_audio = bool(pv('alarm_from_audio'))
+        self.mic_alarm_thresh = int(pv('mic_alarm_threshold'))
+        self.mic_hold_ms = int(pv('mic_hold_ms'))
+        self.alarm_inhibits_search_timeout = bool(pv('alarm_inhibits_search_timeout'))
+
+        self.approach_pulse_ms = int(pv('approach_pulse_ms'))
+        self.approach_rest_ms = int(pv('approach_rest_ms'))
+        self.approach_max_sec = float(pv('approach_max_sec'))
+
+        self.simple_mission_flow = bool(pv('simple_mission_flow'))
+        self.center_hold_before_warning = float(pv('center_hold_before_warning_sec'))
+        self.center_hold_before_warning = max(0.0, self.center_hold_before_warning)
+        self.idle_exit_min_fire = float(pv('idle_exit_min_fire_sec'))
+        self.idle_exit_min_fire = max(0.0, self.idle_exit_min_fire)
+        self.simple_fire_confirm_sec = float(pv('simple_fire_confirm_sec'))
+        self.simple_fire_confirm_sec = max(0.0, self.simple_fire_confirm_sec)
+        self.lost_fire_grace_sec = float(pv('lost_fire_grace_sec'))
+        self.lost_fire_grace_sec = max(0.0, self.lost_fire_grace_sec)
+        self.simple_search_timeout_override = float(pv('simple_search_timeout_sec'))
+        self._simple_log_period = float(pv('simple_progress_log_period_sec'))
+        self._simple_log_period = max(0.2, min(10.0, self._simple_log_period))
+        self.simple_mission_center_band = float(pv('simple_mission_center_band_frac'))
+        self.simple_mission_center_band = max(0.02, min(1.0, self.simple_mission_center_band))
+        mode = str(pv('simple_seek_mode')).strip().lower()
+        if mode not in ('continuous', 'pulse'):
+            mode = 'continuous'
+        self.simple_seek_mode = mode
+        self.simple_pulse_rotate = float(pv('simple_pulse_rotate_sec'))
+        self.simple_pulse_rotate = max(0.05, min(2.0, self.simple_pulse_rotate))
+        self.simple_pulse_rest = float(pv('simple_pulse_rest_sec'))
+        self.simple_pulse_rest = max(0.0, min(2.0, self.simple_pulse_rest))
+        self.simple_pulse_min_interval = float(pv('simple_pulse_min_interval_sec'))
+        self.simple_pulse_min_interval = max(0.0, min(60.0, self.simple_pulse_min_interval))
+        self.simple_pulse_seek_alternate = bool(pv('simple_pulse_seek_alternate'))
+        self.simple_pulse_seek_sign = float(pv('simple_pulse_seek_sign'))
+        self.simple_pulse_seek_sign = 1.0 if self.simple_pulse_seek_sign >= 0 else -1.0
+
+    def _on_parameters_set(self, params):
+        bad = []
+        for p in params:
+            if p.name == 'approach_strategy':
+                s = str(p.value).strip()
+                if s not in VALID_STRATEGIES:
+                    bad.append(f'approach_strategy must be one of {VALID_STRATEGIES}')
+            elif p.name == 'simple_seek_mode':
+                m = str(p.value).strip().lower()
+                if m not in ('continuous', 'pulse'):
+                    bad.append('simple_seek_mode must be continuous or pulse')
+        if bad:
+            return SetParametersResult(successful=False, reason='; '.join(bad))
+
+        old_mode = self.simple_seek_mode
+        old_seek_sign = self.simple_pulse_seek_sign
+        self._load_parameters_from_declarations(incoming_params=params)
+        if old_mode != self.simple_seek_mode:
+            self._reset_simple_pulse_fsm(reset_seek_sign=False)
+            self.get_logger().info(f'runtime params: simple_seek_mode -> {self.simple_seek_mode!r}')
+        elif old_seek_sign != self.simple_pulse_seek_sign:
+            self._reset_simple_pulse_fsm(reset_seek_sign=True)
+        else:
+            self.get_logger().info(
+                'runtime params updated: '
+                + ', '.join(f'{p.name}={p.value}' for p in params)
+            )
+        return SetParametersResult(successful=True)
 
     def _effective_search_timeout_sec(self) -> float:
         """SEARCHING time limit: avoid simple-mission abort while confirming + centering + reacquire."""
+        if self.alarm_inhibits_search_timeout and self.alarm_latched:
+            return float('inf')
         if not self.simple_mission_flow:
             return self.search_timeout
         if self.simple_search_timeout_override > 0.0:
@@ -278,6 +321,10 @@ class BrainNode(Node):
         if msg.data:
             self.alarm_latched = True
             self.get_logger().warn('alarm latched')
+        else:
+            if self.alarm_latched:
+                self.get_logger().info('alarm latch cleared')
+            self.alarm_latched = False
 
     def _on_confirm(self, msg: Bool):
         self.confirm_latched = bool(msg.data)

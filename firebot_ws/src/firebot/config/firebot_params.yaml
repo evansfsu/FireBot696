@@ -41,11 +41,13 @@ brain_node:
     corner_exit_forward_sec: 2.0
     corner_exit_speed: 30.0
 
-    # Low PWM for indoor + low vision FPS (see angular_scale on bridge).
+    # Drive / seek tuning (host): v_approach = forward in approach; rotate_speed = continuous seek yaw PWM.
+    # Pulse seek (simple_seek_mode: pulse): simple_pulse_rotate_sec / simple_pulse_rest_sec / simple_pulse_min_interval_sec.
+    # Pi bridge scales yaw: arduino_bridge_node angular_scale (not here).
     v_approach: 32.0
     kp_yaw: 50.0
     rotate_speed: 32.0
-    search_timeout_sec: 45.0
+    search_timeout_sec: 15.0
     confirm_timeout_sec: 30.0
     warning_seconds: 10
     # Legacy; extinguish timing uses ext_stepper_* below (must match Mega ms constants).
@@ -65,6 +67,8 @@ brain_node:
     alarm_from_audio: false
     mic_alarm_threshold: 600
     mic_hold_ms: 500
+    # When true: latched /alarm/trigger disables SEARCHING timeout until latch cleared (publish false).
+    alarm_inhibits_search_timeout: true
 
     # --- simple mission (see simple_mission_hostvision.launch.py overrides) ---
     # When true: use idle_exit_min_fire_sec, simple_fire_confirm_sec, lost_fire_grace_sec,
@@ -77,7 +81,8 @@ brain_node:
     # Simple mission: middle fraction of horizontal FOV counts as centered (rotation_test-style).
     simple_mission_center_band_frac: 0.70
 
-    simple_search_timeout_sec: 0.0
+    # Simple mission only: cap for SEARCHING (0 = use max(search_timeout_sec, auto floor)).
+    simple_search_timeout_sec: 15.0
     simple_progress_log_period_sec: 1.0
     simple_seek_mode: 'continuous'
     simple_pulse_rotate_sec: 0.25
