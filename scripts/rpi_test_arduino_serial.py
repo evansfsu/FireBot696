@@ -12,10 +12,13 @@ Examples (motors only — no stepper/solenoid/E commands):
   cd ~/Desktop/696/696   # example repo root on Pi
   python3 scripts/rpi_test_arduino_serial.py --version
   python3 scripts/rpi_test_arduino_serial.py           # default = motors
+  python3 scripts/rpi_test_arduino_serial.py motors --port /dev/ttyACM0
+  # Subcommand must come first: NOT  script.py --port /dev/ttyACM0  (that fails).
   python3 scripts/rpi_test_arduino_serial.py probe    # Serial only: do you see D,... ?
   python3 scripts/rpi_test_arduino_serial.py ports
   python3 scripts/rpi_test_arduino_serial.py drive --vx 75 --wz 0 --ms 1500
-  python3 scripts/rpi_test_arduino_serial.py spin --ms 3000 --wz 75
+  # In-place spin = same skid-steer as tested_arduino/front_reverse_spin spinInPlace():
+  python3 scripts/rpi_test_arduino_serial.py spin --port /dev/ttyACM0 --wz 75 --ms 3000
 
 Other:
   python3 scripts/rpi_test_arduino_serial.py smoke   # legacy: spin + R estop
@@ -186,6 +189,11 @@ def cmd_smoke(args, send, read_for) -> None:
 
 
 def cmd_spin(args, send, read_for) -> None:
+    """Skid-steer in place: M,0,0,wz — same corner pattern as front_reverse_spin spinInPlace()."""
+    print(
+        f"In-place spin M,0,0,{args.wz} for {args.ms} ms (front_reverse_spin-style; VMOT required).",
+        flush=True,
+    )
     configure_sensors(send)
     read_for(200)
     motor_hold(send, 0, 0, args.wz, args.ms / 1000.0, simulate=args.dry_run)
@@ -351,10 +359,22 @@ def main() -> int:
     s.set_defaults(func=cmd_smoke)
 
     s = sub.add_parser(
-        "spin", parents=[serial_parent], help="in-place spin with watchdog keepalive"
+        "spin",
+        parents=[serial_parent],
+        help="in-place rotation: M,0,0,wz (same as front_reverse_spin.ino spinInPlace)",
     )
-    s.add_argument("--wz", type=int, default=75)
-    s.add_argument("--ms", type=int, default=2000, help="total spin time (ms)")
+    s.add_argument(
+        "--wz",
+        type=int,
+        default=75,
+        help="angular PWM (±); sign = direction, magnitude like motorSpeed 75 in bench sketch",
+    )
+    s.add_argument(
+        "--ms",
+        type=int,
+        default=2000,
+        help="how long to spin (ms); bench sketch uses ~3000 ms",
+    )
     s.set_defaults(func=cmd_spin)
 
     s = sub.add_parser(

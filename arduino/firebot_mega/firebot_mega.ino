@@ -170,12 +170,12 @@ const uint32_t GO_PRE_SOL_MS   = 3000;
 const uint32_t GO_POST_SOL_MS  = 3000;
 const uint32_t GO_PRE_REV_MS   = 5000;
 
-// Stepper ramp + square wave (non-blocking)
-uint32_t g_last_step_toggle_us = 0;
-uint8_t  g_step_level = LOW;
+// Stepper ramp + STEP waveform — same shape as bench stepMotor(): HIGH for d µs,
+// then LOW for d µs (non-blocking), not a generic square toggle.
+uint32_t g_step_last_half_us = 0;
+uint8_t  g_step_line_high = 0;  // 1 = STEP pin driven HIGH (mid pulse)
 int      g_step_dir   = 0;     // -1, 0, +1
 uint16_t g_step_half_us = STEP_RAMP_START_HALF_US;
-uint8_t  g_ramp_edge_flip = 0;
 uint8_t  g_ramp_pulses_at_speed = 0;
 bool     g_stepper_ramp_complete = false;
 
@@ -369,10 +369,11 @@ static void stopMotors() {
 
 static void resetStepperRamp() {
   g_step_half_us = STEP_RAMP_START_HALF_US;
-  g_ramp_edge_flip = 0;
   g_ramp_pulses_at_speed = 0;
   g_stepper_ramp_complete = false;
-  g_last_step_toggle_us = micros();
+  digitalWrite(PIN_STEP, LOW);
+  g_step_line_high = 0;
+  g_step_last_half_us = micros();
 }
 
 /** Stop bench "GO" sequence. @param silent if true, no L,go_cancelled line */
@@ -382,7 +383,7 @@ static void cancelGoSequence(bool silent) {
   digitalWrite(PIN_SOL, LOW);
   g_step_dir = 0;
   digitalWrite(PIN_STEP, LOW);
-  g_step_level = LOW;
+  g_step_line_high = 0;
   if (was_active && !silent) {
     Serial.println(F("L,go_cancelled"));
   }
@@ -394,6 +395,7 @@ static void allOutputsOff() {
   digitalWrite(PIN_SOL, LOW);
   g_step_dir = 0;
   digitalWrite(PIN_STEP, LOW);
+  g_step_line_high = 0;
   g_ext_phase = 0;
   g_protocol_drive = false;
   g_ts_approach_moving = false;
@@ -429,7 +431,7 @@ static void startExtinguisherPhase(uint8_t phase) {
       digitalWrite(PIN_SOL, LOW);
       g_step_dir = 0;
       digitalWrite(PIN_STEP, LOW);
-      g_step_level = LOW;
+      g_step_line_high = 0;
       g_state = (g_left_cmd || g_right_cmd) ? FW_DRIVING : FW_IDLE;
       break;
     case 1:  // pin pull: energize solenoid
@@ -440,6 +442,7 @@ static void startExtinguisherPhase(uint8_t phase) {
     case 2:  // advance lead-screw (same DIR as runStepperForDuration: LOW)
       digitalWrite(PIN_SOL, LOW);
       digitalWrite(PIN_DIR, LOW);
+      delayMicroseconds(5);
       g_step_dir = +1;
       resetStepperRamp();
       g_state = FW_EXTINGUISHING;
@@ -447,6 +450,7 @@ static void startExtinguisherPhase(uint8_t phase) {
     case 3:  // retract (same DIR as reverseStepperForDuration: HIGH)
       digitalWrite(PIN_SOL, LOW);
       digitalWrite(PIN_DIR, HIGH);
+      delayMicroseconds(5);
       g_step_dir = -1;
       resetStepperRamp();
       g_state = FW_EXTINGUISHING;
@@ -456,7 +460,7 @@ static void startExtinguisherPhase(uint8_t phase) {
       digitalWrite(PIN_SOL, LOW);
       g_step_dir = 0;
       digitalWrite(PIN_STEP, LOW);
-      g_step_level = LOW;
+      g_step_line_high = 0;
       g_state = (g_left_cmd || g_right_cmd) ? FW_DRIVING : FW_IDLE;
       break;
   }
@@ -495,7 +499,7 @@ static void startGoSequence() {
   digitalWrite(PIN_SOL, LOW);
   g_step_dir = 0;
   digitalWrite(PIN_STEP, LOW);
-  g_step_level = LOW;
+  g_step_line_high = 0;
   g_goseq = GOSEQ_PRE_SOL;
   g_goseq_phase_ms = millis();
   g_state = FW_EXTINGUISHING;
@@ -529,6 +533,7 @@ static void serviceGoSequence() {
         g_goseq = GOSEQ_STEP_FWD;
         g_goseq_phase_ms = now;
         digitalWrite(PIN_DIR, LOW);
+        delayMicroseconds(5);
         g_step_dir = +1;
         resetStepperRamp();
       }
@@ -537,7 +542,7 @@ static void serviceGoSequence() {
       if (t >= EXT_STEPPER_RUN_MS) {
         g_step_dir = 0;
         digitalWrite(PIN_STEP, LOW);
-        g_step_level = LOW;
+        g_step_line_high = 0;
         g_goseq = GOSEQ_PRE_REV;
         g_goseq_phase_ms = now;
       }
@@ -547,6 +552,7 @@ static void serviceGoSequence() {
         g_goseq = GOSEQ_STEP_REV;
         g_goseq_phase_ms = now;
         digitalWrite(PIN_DIR, HIGH);
+        delayMicroseconds(5);
         g_step_dir = -1;
         resetStepperRamp();
       }
@@ -555,7 +561,7 @@ static void serviceGoSequence() {
       if (t >= EXT_STEPPER_RUN_MS) {
         g_step_dir = 0;
         digitalWrite(PIN_STEP, LOW);
-        g_step_level = LOW;
+        g_step_line_high = 0;
         digitalWrite(PIN_SOL, LOW);
         g_goseq = GOSEQ_DONE;
         g_state = FW_IDLE;
@@ -569,36 +575,36 @@ static void serviceGoSequence() {
 
 static void serviceStepper() {
   if (g_step_dir == 0) return;
-  // Emit every half-period that is already due. The main loop may be slow when
-  // the Pi polls 'S' (pulseIn on ultrasonic can block ~25 ms) or serial RX runs
-  // long; one toggle per loop() would stall the lead-screw to a crawl or look
-  // "dead" under load.
-  const uint16_t kMaxToggles = 600;
-  for (uint16_t n = 0; n < kMaxToggles; n++) {
+  // Same timing as bench stepMotor(delayUs): HIGH for delayUs, LOW for delayUs,
+  // then next step — not a free-running 50% square wave (some A4988 layouts
+  // misbehave if the first edge after DIR change is ambiguous).
+  const uint16_t kMaxHalfEdges = 800;
+  for (uint16_t n = 0; n < kMaxHalfEdges; n++) {
     uint16_t half = g_stepper_ramp_complete ? STEP_RAMP_END_HALF_US : g_step_half_us;
     uint32_t now = micros();
-    if ((uint32_t)(now - g_last_step_toggle_us) < half) break;
+    if ((uint32_t)(now - g_step_last_half_us) < half) break;
 
-    g_step_level = !g_step_level;
-    digitalWrite(PIN_STEP, g_step_level);
-    g_last_step_toggle_us += half;
-
-    if (g_stepper_ramp_complete) continue;
-
-    g_ramp_edge_flip ^= 1;
-    if (g_ramp_edge_flip != 0) continue;
-
-    g_ramp_pulses_at_speed++;
-    if (g_ramp_pulses_at_speed < STEP_RAMP_STEPS_PER_BAND) continue;
-
-    g_ramp_pulses_at_speed = 0;
-    int next = (int)g_step_half_us + STEP_RAMP_DELTA_HALF_US;
-    if (next >= (int)STEP_RAMP_END_HALF_US) {
-      g_step_half_us = (uint16_t)next;
+    if (g_step_line_high == 0) {
+      digitalWrite(PIN_STEP, HIGH);
+      g_step_line_high = 1;
     } else {
-      g_step_half_us = STEP_RAMP_END_HALF_US;
-      g_stepper_ramp_complete = true;
+      digitalWrite(PIN_STEP, LOW);
+      g_step_line_high = 0;
+      if (!g_stepper_ramp_complete) {
+        g_ramp_pulses_at_speed++;
+        if (g_ramp_pulses_at_speed >= STEP_RAMP_STEPS_PER_BAND) {
+          g_ramp_pulses_at_speed = 0;
+          int next = (int)g_step_half_us + STEP_RAMP_DELTA_HALF_US;
+          if (next >= (int)STEP_RAMP_END_HALF_US) {
+            g_step_half_us = (uint16_t)next;
+          } else {
+            g_step_half_us = STEP_RAMP_END_HALF_US;
+            g_stepper_ramp_complete = true;
+          }
+        }
+      }
     }
+    g_step_last_half_us += half;
   }
 }
 
@@ -967,7 +973,7 @@ static void performAction(uint8_t a) {
       digitalWrite(PIN_SOL, LOW);
       g_step_dir = 0;
       digitalWrite(PIN_STEP, LOW);
-      g_step_level = LOW;
+      g_step_line_high = 0;
       break;
     case 1: handleMotorCmd( g_tseq_speed, 0, 0); break;
     case 2: handleMotorCmd(-g_tseq_speed, 0, 0); break;
