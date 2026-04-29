@@ -30,7 +30,7 @@ import argparse
 import sys
 import time
 
-__version__ = "4"  # Pi: git pull this repo so you get updates
+__version__ = "5"  # Pi: git pull this repo so you get updates
 
 # Mega PROTOCOL_DRIVE_WATCHDOG_MS — must refresh M,.. faster than this.
 MOTOR_KEEPALIVE_MS = 300
@@ -73,20 +73,38 @@ def open_serial(
     import serial
 
     ser = serial.Serial(port, baud, timeout=0.2)
-    print(f"Opened {port} @ {baud}, waiting {settle}s for Mega boot (USB open may reset Mega)…")
-    time.sleep(settle)
+    # Mega prints boot lines right after USB open (DTR reset). If we sleep without
+    # reading, the USB CDC RX buffer can overflow and we lose L,firebot_mega_ready.
+    print(
+        f"Opened {port} @ {baud}; reading serial for {settle}s while Mega boots "
+        "(unread boot text can overflow USB buffer and hide L,firebot_mega_ready)…"
+    )
     saw_ready = False
-    t_drain = time.time()
-    while ser.in_waiting and time.time() - t_drain < 1.0:
-        line = ser.readline().decode("ascii", errors="replace").strip()
-        if line:
-            print(f"  < {line}")
-            if "firebot_mega_ready" in line:
+    settle_end = time.time() + settle
+    while time.time() < settle_end:
+        raw = ser.readline().decode("ascii", errors="replace").strip()
+        if raw:
+            print(f"  < {raw}")
+            if "firebot_mega_ready" in raw:
                 saw_ready = True
+        else:
+            time.sleep(0.02)
+
+    # Catch a late banner if prints just after the window
+    t_late = time.time()
+    while not saw_ready and time.time() - t_late < 0.5:
+        raw = ser.readline().decode("ascii", errors="replace").strip()
+        if raw:
+            print(f"  < {raw}")
+            if "firebot_mega_ready" in raw:
+                saw_ready = True
+                break
+        else:
+            time.sleep(0.05)
 
     if wait_ready and not saw_ready:
         deadline = time.time() + max(ready_timeout, 0.5)
-        print(f"Waiting up to {ready_timeout:.1f}s for L,firebot_mega_ready …")
+        print(f"Still no ready banner; reading up to {ready_timeout:.1f}s more …")
         while time.time() < deadline:
             raw = ser.readline().decode("ascii", errors="replace").strip()
             if raw:
@@ -98,12 +116,12 @@ def open_serial(
                 time.sleep(0.05)
         if not saw_ready:
             print(
-                "[warn] No firebot_mega_ready seen — wrong port/baud, or not running firebot_mega.ino. "
-                "Try: python3 scripts/rpi_test_arduino_serial.py ports | probe",
+                "[warn] No firebot_mega_ready — wrong port, wrong baud, or not firebot_mega.ino. "
+                "Run: python3 scripts/rpi_test_arduino_serial.py probe",
                 file=sys.stderr,
             )
     elif wait_ready and saw_ready:
-        print("(Saw Mega boot banner.)")
+        print("(OK: Mega boot banner received.)")
 
     return ser
 
@@ -128,7 +146,7 @@ def cmd_motors(args, send, read_for) -> None:
         configure_sensors(send)
         read_for(200)
         send("S")
-        read_for(250)
+        read_for(800)
     motor_hold(
         send, args.vx, 0, 0, args.forward_ms / 1000.0, simulate=args.dry_run
     )
