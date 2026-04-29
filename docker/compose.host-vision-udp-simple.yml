@@ -1,0 +1,31 @@
+# Brain simple-mission stack + host Picamera/YOLO via UDP (no vision_node).
+# Merge: docker compose -f docker-compose.yml -f compose.host-vision-udp-simple.yml up -d
+#
+# One command from repo root (Linux/Pi): ./scripts/run_simple_mission_hostvision.sh
+#
+# Or: start this compose, then in another shell:
+#   python3 scripts/rpi_test_yolo_fire.py --video-mode --udp-bridge 127.0.0.1:7766
+#
+# Dev profile: docker compose --profile dev -f docker-compose.yml -f compose.host-vision-udp-simple.yml up -d
+
+services:
+  firebot:
+    environment:
+      - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - FIREBOT_UDP_DETECTION_PORT=7766
+    command: ros2 launch firebot simple_mission_hostvision.launch.py
+
+  firebot-dev:
+    environment:
+      - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - FIREBOT_UDP_DETECTION_PORT=7766
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               cd /firebot_ws &&
+               colcon build --symlink-install &&
+               source install/setup.bash &&
+               ros2 launch firebot simple_mission_hostvision.launch.py"

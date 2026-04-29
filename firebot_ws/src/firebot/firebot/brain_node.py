@@ -3,9 +3,15 @@
 States: IDLE, SEARCHING, AWAITING_CONFIRM, APPROACHING, WARNING,
         EXTINGUISHING, COMPLETE.
 
-SEARCHING begins with a short straight forward segment (corner exit) so the
-robot leaves a corner before rotating to keep the fire in frame. Approach ends
-when the fire is centered and bbox area lies in
+**Simple mission flow** (`simple_mission_flow: true`): IDLE → SEARCHING (fire or
+``/alarm/trigger``) → WARNING after ``center_hold_before_warning_sec`` of
+continuous centered fire (skips AWAITING_CONFIRM and APPROACHING) → EXTINGUISHING
+(solenoid + stepper via ``/cmd/extinguisher``) → COMPLETE → IDLE. Tune
+``warning_seconds`` for extra in-place dwell + buzzer before discharge (0 = go
+soon after entering WARNING).
+
+Full-flow SEARCHING begins with a short straight forward segment (corner exit).
+Approach ends when the fire is centered and bbox area lies in
 [approach_bbox_min_frac, approach_bbox_max_frac], and APPROACHING has lasted at
 least approach_gate_min_sec — geared to slow indoor motion and ~1–3 FPS vision.
 
@@ -71,6 +77,10 @@ class BrainNode(Node):
         self.declare_parameter('approach_rest_ms', 600)
         self.declare_parameter('approach_max_sec', 60.0)
 
+        # Skip confirm + approach: SEARCHING → WARNING once fire stays centered this long.
+        self.declare_parameter('simple_mission_flow', False)
+        self.declare_parameter('center_hold_before_warning_sec', 15.0)
+
         self.conf_thresh = float(self.get_parameter('confidence_threshold').value)
         self.stable_frames = int(self.get_parameter('stable_frames').value)
         self.center_tol = float(self.get_parameter('center_offset_thresh').value)
@@ -105,6 +115,12 @@ class BrainNode(Node):
         self.approach_rest_ms = int(self.get_parameter('approach_rest_ms').value)
         self.approach_max_sec = float(self.get_parameter('approach_max_sec').value)
 
+        self.simple_mission_flow = bool(self.get_parameter('simple_mission_flow').value)
+        self.center_hold_before_warning = float(
+            self.get_parameter('center_hold_before_warning_sec').value
+        )
+        self.center_hold_before_warning = max(0.0, self.center_hold_before_warning)
+
         self.drive_pub = self.create_publisher(Twist, '/cmd/drive', 10)
         self.ext_pub = self.create_publisher(Int32, '/cmd/extinguisher', 10)
         self.warn_pub = self.create_publisher(Int32, '/cmd/warning', 10)
@@ -133,11 +149,15 @@ class BrainNode(Node):
         self.approach_pulse_edge_ns = 0
         self.approach_pulse_driving = False
         self.corner_exit_done = True
+        self._centered_hold_sec = 0.0
+        self._last_brain_tick = self.get_clock().now()
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
             f'brain_node up (strategy={self.approach_strategy}, '
-            f'alarm_from_audio={self.alarm_from_audio})'
+            f'alarm_from_audio={self.alarm_from_audio}, '
+            f'simple_mission_flow={self.simple_mission_flow}, '
+            f'center_hold_before_warning={self.center_hold_before_warning:.1f}s)'
         )
 
     def _on_detection(self, msg: FireDetection):
@@ -194,6 +214,9 @@ class BrainNode(Node):
             self.corner_exit_done = False
         if new_state == State.IDLE:
             self._reset_transient()
+            self._centered_hold_sec = 0.0
+        if new_state == State.SEARCHING:
+            self._centered_hold_sec = 0.0
 
     def _reset_transient(self):
         self.alarm_latched = False
@@ -251,6 +274,13 @@ class BrainNode(Node):
         return bool(self.ir_triggered)
 
     def _tick(self):
+        now = self.get_clock().now()
+        dt_raw = (now - self._last_brain_tick).nanoseconds / 1e9
+        self._last_brain_tick = now
+        self._brain_dt = max(0.0, min(0.5, dt_raw))
+        if self._brain_dt < 1e-6:
+            self._brain_dt = 0.1
+
         state_msg = String()
         state_msg.data = self.state
         self.state_pub.publish(state_msg)
@@ -283,9 +313,14 @@ class BrainNode(Node):
         if not self.corner_exit_done:
             if self._time_in_state() < self.corner_exit_forward_sec:
                 self.centered_streak = 0
+                self._centered_hold_sec = 0.0
                 self._drive(linear_x=self.corner_exit_speed, angular_z=0.0)
                 return
             self.corner_exit_done = True
+
+        if self.simple_mission_flow:
+            self._tick_searching_simple()
+            return
 
         det = self.latest_det
         if not self._detection_is_fire():
@@ -304,6 +339,29 @@ class BrainNode(Node):
         self.centered_streak = 0
         direction = -1.0 if offset > 0 else 1.0
         self._drive(angular_z=direction * self.rot_speed)
+
+    def _tick_searching_simple(self):
+        """SEARCHING with no confirm/approach: dwell centered, then WARNING."""
+        if not self._detection_is_fire():
+            self._centered_hold_sec = 0.0
+            self._drive(angular_z=self.rot_speed)
+            return
+
+        if not self._centered_enough():
+            self._centered_hold_sec = 0.0
+            offset = float(self.latest_det.x_offset)
+            direction = -1.0 if offset > 0 else 1.0
+            self._drive(angular_z=direction * self.rot_speed)
+            return
+
+        self._stop()
+        self._centered_hold_sec += self._brain_dt
+        if self._centered_hold_sec >= self.center_hold_before_warning:
+            self.get_logger().info(
+                f'center hold {self._centered_hold_sec:.1f}s '
+                f'>= {self.center_hold_before_warning:.1f}s -> WARNING'
+            )
+            self._set_state(State.WARNING)
 
     def _tick_await_confirm(self):
         self._stop()

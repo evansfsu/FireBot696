@@ -62,6 +62,12 @@ brain_node:
     mic_alarm_threshold: 600
     mic_hold_ms: 500
 
+    # --- simple end-to-end test (IDLE → SEARCHING → WARNING → EXTINGUISHING) ---
+    # When true: skip AWAITING_CONFIRM and APPROACHING. After SEARCHING keeps fire
+    # centered continuously for center_hold_before_warning_sec, go to WARNING.
+    simple_mission_flow: false
+    center_hold_before_warning_sec: 15.0
+
 # rotation_center_test_node — edit here for quick tuning (host-vision + rotation launch).
 rotation_center_test:
   ros__parameters:
