@@ -9,6 +9,8 @@ Behavior
    reset to 0 on any missed frame. Log ~1 Hz: ``waiting_for_align: fire_continuous= X / Y s`` (default Y=12 s).
 2. ALIGN — After ``fire_confirm_sec`` (default 12 s), pulse-rotate: ``pulse_rotate_sec`` drive,
    ``pulse_rest_sec`` coast, at most one new burst every ``pulse_min_interval_sec`` (default 5 s).
+   If the flame drops out, the robot holds still for ``lost_fire_grace_sec`` (default 5 s) before
+   SEEK rotation; if detection returns earlier, SEEK never starts for that dropout.
    Only ``angular.z``; sign matches brain SEARCHING. SEEK uses ``seek_rotation_sign`` / ``seek_alternate``.
 
 **Center band:** ``center_band_frac`` (default **0.75**) = treat the middle fraction of the frame width
@@ -64,6 +66,8 @@ class RotationCenterTestNode(Node):
         self.declare_parameter('confidence_threshold', 0.25)
         self.declare_parameter('seek_rotation_sign', 1.0)
         self.declare_parameter('seek_alternate', True)
+        # In ALIGN: seconds with no fire before SEEK rotation is allowed (hold still while waiting for re-detect).
+        self.declare_parameter('lost_fire_grace_sec', 5.0)
         self.declare_parameter('log_flip_left_right', False)
         self.declare_parameter('wait_log_period_sec', 1.0)
         self.declare_parameter('centered_log_period_sec', 2.0)
@@ -79,6 +83,8 @@ class RotationCenterTestNode(Node):
         self._seek_sign = float(self.get_parameter('seek_rotation_sign').value)
         self._seek_sign = 1.0 if self._seek_sign >= 0 else -1.0
         self._seek_alternate = bool(self.get_parameter('seek_alternate').value)
+        self._lost_fire_grace = float(self.get_parameter('lost_fire_grace_sec').value)
+        self._lost_fire_grace = max(0.0, self._lost_fire_grace)
         self._log_flip = bool(self.get_parameter('log_flip_left_right').value)
         self._wait_log_period = float(self.get_parameter('wait_log_period_sec').value)
         self._centered_log_period = float(self.get_parameter('centered_log_period_sec').value)
@@ -97,12 +103,15 @@ class RotationCenterTestNode(Node):
         self._last_centered_log = self.get_clock().now()
         self._current_seek_sign = self._seek_sign
         self._last_drive_start = None  # rclpy.time.Time; None = no burst yet in ALIGN
+        self._lost_since = None  # rclpy.time.Time when fire was last lost in ALIGN; None = currently have fire timing ok
+        self._last_lost_grace_log = self.get_clock().now()
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
             'rotation_center_test_node up — /cmd/drive; '
             f'center_band_frac={self._center_band:.2f} pulse_rotate={self._pulse_rotate:.2f}s '
             f'pulse_rest={self._pulse_rest:.2f}s min_interval={self._pulse_min_interval:.2f}s '
+            f'lost_fire_grace={self._lost_fire_grace:.2f}s '
             '(do not run brain_node concurrently)'
         )
 
@@ -168,12 +177,14 @@ class RotationCenterTestNode(Node):
                 self._pulse = PulsePhase.IDLE
                 self._phase_enter = now
                 self._last_drive_start = None
+                self._lost_since = None
             return
 
         # ALIGN
         assert self._mode == Mode.ALIGN
 
         if self._is_fire() and self._centered():
+            self._lost_since = None
             self._stop()
             self._pulse = PulsePhase.IDLE
             if (now - self._last_centered_log).nanoseconds / 1e9 >= self._centered_log_period:
@@ -184,6 +195,25 @@ class RotationCenterTestNode(Node):
                     f'fire_continuous={self._fire_continuous_sec:.2f}s'
                 )
             return
+
+        if self._is_fire():
+            self._lost_since = None
+        else:
+            if self._lost_since is None:
+                self._lost_since = now
+
+        if not self._is_fire() and self._lost_since is not None:
+            lost_elapsed = (now - self._lost_since).nanoseconds / 1e9
+            if lost_elapsed < self._lost_fire_grace:
+                self._stop()
+                self._pulse = PulsePhase.IDLE
+                if (now - self._last_lost_grace_log).nanoseconds / 1e9 >= self._wait_log_period:
+                    self._last_lost_grace_log = now
+                    self.get_logger().info(
+                        f'action=LOST_FIRE_GRACE hold_seconds={lost_elapsed:.2f}/'
+                        f'{self._lost_fire_grace:.1f}s (no SEEK until grace elapses)'
+                    )
+                return
 
         elapsed = (now - self._phase_enter).nanoseconds / 1e9
 

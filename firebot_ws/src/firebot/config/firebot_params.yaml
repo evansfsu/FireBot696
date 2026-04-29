@@ -75,6 +75,8 @@ rotation_center_test:
     confidence_threshold: 0.25
     seek_rotation_sign: 1.0
     seek_alternate: true
+    # ALIGN: hold still this long after flame lost before SEEK rotation (wait for re-detect).
+    lost_fire_grace_sec: 5.0
 
 arduino_bridge_node:
   ros__parameters:
