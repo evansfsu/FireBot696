@@ -68,7 +68,8 @@ class VisionNode(Node):
             self.get_parameter('opencv_video_device').value or ''
         ).strip()
         self.opencv_only = bool(self.get_parameter('opencv_only').value)
-        if os.environ.get('FIREBOT_OPENCV_ONLY', '').strip().lower() in ('1', 'true', 'yes'):
+        _oco = os.environ.get('FIREBOT_OPENCV_ONLY', '').strip().lower()
+        if _oco in ('1', 'true', 'yes', 'on'):
             self.opencv_only = True
 
         self._last_no_frame_log = 0.0

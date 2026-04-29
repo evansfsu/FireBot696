@@ -1,0 +1,38 @@
+# Merge with main compose — Picamera2 + YOLO in a *second* container (matches host test path).
+# Main stack skips vision_node so only one publisher owns /fire/detection.
+#
+#   cd .../696/docker
+#   docker compose -f docker-compose.yml -f compose.picam-sidecar.yml up -d
+#
+services:
+  firebot:
+    environment:
+      - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - FIREBOT_SKIP_VISION=1
+
+  firebot-picam:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    network_mode: host
+    privileged: true
+    ipc: host
+    group_add:
+      - video
+    environment:
+      - ROS_DOMAIN_ID=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+    volumes:
+      - ../models:/models
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/media0:/dev/media0
+      - /dev/media1:/dev/media1
+      - /dev/v4l-subdev0:/dev/v4l-subdev0
+      - /dev/v4l-subdev1:/dev/v4l-subdev1
+    restart: unless-stopped
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash && source /firebot_ws/install/setup.bash &&
+      exec ros2 run firebot picam_yolo_publisher --ros-args --log-level info"

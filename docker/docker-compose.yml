@@ -10,10 +10,11 @@ services:
       - video
     environment:
       - ROS_DOMAIN_ID=0
-      # CSI cameras: host test uses Picamera2. Forcing OpenCV-only (FIREBOT_OPENCV_ONLY=1)
-      # breaks if /dev/video* is missing or wrong inside the container. Leave unset so
-      # vision_node tries Picamera2 first, then V4L. Or run host Picamera publisher:
-      # FIREBOT_SKIP_VISION=1 + scripts/host_picam_yolo_publisher.py on the Pi.
+      # Explicit 0 overrides a host .env or shell export of FIREBOT_OPENCV_ONLY=1.
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      # Picamera2 path matches host rpi_test_yolo_fire; OpenCV/V4L is fallback only.
+      # If vision still fails: docker compose -f docker/docker-compose.yml -f docker/compose.picam-sidecar.yml
     volumes:
       - ../models:/models
     devices:
@@ -39,6 +40,8 @@ services:
       - dev
     environment:
       - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
     volumes:
       - ../firebot_ws/src:/firebot_ws/src
       - ../models:/models

@@ -27,6 +27,7 @@ setup(
             'brain_node = firebot.brain_node:main',
             'arduino_bridge_node = firebot.arduino_bridge_node:main',
             'firebot = firebot.firebot_cli:main',
+            'picam_yolo_publisher = firebot.picam_yolo_publisher:main',
         ],
     },
 )
