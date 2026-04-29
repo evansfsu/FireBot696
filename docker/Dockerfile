@@ -28,7 +28,12 @@ RUN arch="$(dpkg --print-architecture)" && \
     esac && \
     rm -rf /var/lib/apt/lists/*
 
+# Ultralytics depends on PyTorch. Default PyPI torch wheels are CUDA (many nvidia-* packages,
+# multi‑GB). Pi 5 has no NVIDIA GPU; use CPU builds from PyTorch's index only.
 RUN pip3 install --no-cache-dir \
+    torch torchvision \
+    --index-url https://download.pytorch.org/whl/cpu \
+ && pip3 install --no-cache-dir \
     ultralytics \
     opencv-python-headless \
     pyserial
