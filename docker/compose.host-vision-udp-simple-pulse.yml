@@ -1,0 +1,27 @@
+# Simple mission + **pulse** seek/track (0.25s bursts, 3s min interval). See
+# simple_mission_hostvision_pulse.launch.py
+#
+#   cd docker
+#   docker compose -f docker-compose.yml -f compose.host-vision-udp-simple-pulse.yml up -d
+
+services:
+  firebot:
+    environment:
+      - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - FIREBOT_UDP_DETECTION_PORT=7766
+    command: ros2 launch firebot simple_mission_hostvision_pulse.launch.py
+
+  firebot-dev:
+    environment:
+      - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - FIREBOT_UDP_DETECTION_PORT=7766
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               cd /firebot_ws &&
+               colcon build --symlink-install &&
+               source install/setup.bash &&
+               ros2 launch firebot simple_mission_hostvision_pulse.launch.py"

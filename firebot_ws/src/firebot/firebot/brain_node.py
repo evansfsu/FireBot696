@@ -10,7 +10,9 @@ to reject brief noise). Centering uses ``simple_mission_center_band_frac``
 not the tight ``center_offset_thresh`` used in full-flow approach.
 Accumulate ``simple_fire_confirm_sec`` (e.g. 12) of continuous fire to **arm**;
 brief loss of fire uses ``lost_fire_grace_sec`` then **SEEK_SPIN** (same before
-and after arm; fire-confirm timer resets while lost). After armed,
+and after arm; fire-confirm timer resets while lost). Seek/track yaw is either
+``simple_seek_mode=continuous`` or ``pulse`` (short bursts + min interval, like
+``rotation_center_test_node``). After armed,
 ``center_hold_before_warning_sec`` of continuous centering (fire still visible
 with the wide band above) → WARNING → ``warning_seconds`` → EXTINGUISHING →
 COMPLETE → IDLE (skips AWAITING_CONFIRM and APPROACHING). The first time
@@ -73,6 +75,10 @@ class BrainNode(Node):
         self.declare_parameter('confirm_timeout_sec', 30.0)
         self.declare_parameter('warning_seconds', 10)
         self.declare_parameter('discharge_seconds', 6.0)
+        # Extinguish E,2 advance + dwell + E,3 retract (match firebot_mega EXT_* ms).
+        self.declare_parameter('ext_stepper_advance_sec', 5.3)
+        self.declare_parameter('ext_stepper_dwell_sec', 10.0)
+        self.declare_parameter('ext_stepper_retract_sec', 5.3)
         self.declare_parameter('complete_hold_sec', 3.0)
 
         self.declare_parameter('approach_strategy', 'yolo_only')
@@ -100,6 +106,13 @@ class BrainNode(Node):
         self.declare_parameter('simple_progress_log_period_sec', 1.0)
         # Simple mission: |x_offset| <= this counts as "centered" (same idea as rotation_center_test center_band_frac).
         self.declare_parameter('simple_mission_center_band_frac', 0.70)
+        # simple_seek_mode: "continuous" (default) or "pulse" (rotation_center_test-style bursts).
+        self.declare_parameter('simple_seek_mode', 'continuous')
+        self.declare_parameter('simple_pulse_rotate_sec', 0.25)
+        self.declare_parameter('simple_pulse_rest_sec', 0.35)
+        self.declare_parameter('simple_pulse_min_interval_sec', 3.0)
+        self.declare_parameter('simple_pulse_seek_alternate', True)
+        self.declare_parameter('simple_pulse_seek_sign', 1.0)
 
         self.conf_thresh = float(self.get_parameter('confidence_threshold').value)
         self.stable_frames = int(self.get_parameter('stable_frames').value)
@@ -117,6 +130,12 @@ class BrainNode(Node):
         self.warning_secs = float(self.get_parameter('warning_seconds').value)
         self.warning_secs = max(0.0, self.warning_secs)
         self.discharge_secs = float(self.get_parameter('discharge_seconds').value)
+        self.ext_stepper_advance = float(self.get_parameter('ext_stepper_advance_sec').value)
+        self.ext_stepper_advance = max(0.5, min(120.0, self.ext_stepper_advance))
+        self.ext_stepper_dwell = float(self.get_parameter('ext_stepper_dwell_sec').value)
+        self.ext_stepper_dwell = max(0.0, min(120.0, self.ext_stepper_dwell))
+        self.ext_stepper_retract = float(self.get_parameter('ext_stepper_retract_sec').value)
+        self.ext_stepper_retract = max(0.5, min(120.0, self.ext_stepper_retract))
         self.complete_hold = float(self.get_parameter('complete_hold_sec').value)
 
         strat = str(self.get_parameter('approach_strategy').value)
@@ -158,6 +177,23 @@ class BrainNode(Node):
             self.get_parameter('simple_mission_center_band_frac').value
         )
         self.simple_mission_center_band = max(0.02, min(1.0, self.simple_mission_center_band))
+        mode = str(self.get_parameter('simple_seek_mode').value).strip().lower()
+        if mode not in ('continuous', 'pulse'):
+            mode = 'continuous'
+        self.simple_seek_mode = mode
+        self.simple_pulse_rotate = float(self.get_parameter('simple_pulse_rotate_sec').value)
+        self.simple_pulse_rotate = max(0.05, min(2.0, self.simple_pulse_rotate))
+        self.simple_pulse_rest = float(self.get_parameter('simple_pulse_rest_sec').value)
+        self.simple_pulse_rest = max(0.0, min(2.0, self.simple_pulse_rest))
+        self.simple_pulse_min_interval = float(
+            self.get_parameter('simple_pulse_min_interval_sec').value
+        )
+        self.simple_pulse_min_interval = max(0.0, min(60.0, self.simple_pulse_min_interval))
+        self.simple_pulse_seek_alternate = bool(
+            self.get_parameter('simple_pulse_seek_alternate').value
+        )
+        self.simple_pulse_seek_sign = float(self.get_parameter('simple_pulse_seek_sign').value)
+        self.simple_pulse_seek_sign = 1.0 if self.simple_pulse_seek_sign >= 0 else -1.0
 
         self.drive_pub = self.create_publisher(Twist, '/cmd/drive', 10)
         self.ext_pub = self.create_publisher(Int32, '/cmd/extinguisher', 10)
@@ -194,6 +230,11 @@ class BrainNode(Node):
         self._lost_since = None
         self._last_brain_tick = self.get_clock().now()
         self._last_simple_log = self.get_clock().now()
+        self._simple_p_phase = 'IDLE'
+        self._simple_p_enter = self.get_clock().now()
+        self._simple_p_last_start = None
+        self._simple_p_cmd = 0.0
+        self._simple_p_seek_sign = self.simple_pulse_seek_sign
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
@@ -204,6 +245,7 @@ class BrainNode(Node):
             f'idle_exit_min_fire={self.idle_exit_min_fire:.2f}s, '
             f'simple_fire_confirm={self.simple_fire_confirm_sec:.1f}s, '
             f'simple_center_band=|x_off|<={self.simple_mission_center_band:.2f}, '
+            f'simple_seek_mode={self.simple_seek_mode}, '
             f'search_timeout={self.search_timeout:.0f}s '
             f'simple_search_cap={self._effective_search_timeout_sec():.0f}s)'
         )
@@ -285,6 +327,7 @@ class BrainNode(Node):
             self._fire_confirm_accum = 0.0
             self._lost_since = None
             self._centered_hold_sec = 0.0
+            self._reset_simple_pulse_fsm(reset_seek_sign=True)
         if new_state == State.IDLE:
             self._reset_transient()
             self._centered_hold_sec = 0.0
@@ -294,6 +337,64 @@ class BrainNode(Node):
             self._lost_since = None
         if new_state == State.SEARCHING and old_state != State.IDLE:
             self._centered_hold_sec = 0.0
+
+    def _reset_simple_pulse_fsm(self, reset_seek_sign: bool = False) -> None:
+        self._simple_p_phase = 'IDLE'
+        self._simple_p_enter = self.get_clock().now()
+        self._simple_p_last_start = None
+        self._simple_p_cmd = 0.0
+        if reset_seek_sign:
+            self._simple_p_seek_sign = self.simple_pulse_seek_sign
+
+    def _simple_output_rotation(self, wz_cmd: float, alternate_seek_burst: bool) -> None:
+        """Seek/track yaw: continuous command or pulsed bursts (rotation_center_test style)."""
+        if self.simple_seek_mode != 'pulse':
+            if abs(wz_cmd) < 1e-6:
+                self._stop()
+            else:
+                self._drive(angular_z=wz_cmd)
+            return
+
+        now = self.get_clock().now()
+        if abs(wz_cmd) < 1e-6:
+            self._stop()
+            self._simple_p_phase = 'IDLE'
+            return
+
+        if self._simple_p_phase != 'IDLE' and (self._simple_p_cmd > 0) != (wz_cmd > 0):
+            self._simple_p_phase = 'IDLE'
+            self._stop()
+
+        if self._simple_p_phase == 'IDLE':
+            if self._simple_p_last_start is not None:
+                gap = (now - self._simple_p_last_start).nanoseconds / 1e9
+                if gap < self.simple_pulse_min_interval:
+                    self._stop()
+                    return
+            self._simple_p_phase = 'DRIVE'
+            self._simple_p_enter = now
+            self._simple_p_cmd = wz_cmd
+            self._simple_p_last_start = now
+            self._drive(angular_z=wz_cmd)
+            if alternate_seek_burst and self.simple_pulse_seek_alternate:
+                self._simple_p_seek_sign *= -1.0
+            return
+
+        elapsed = (now - self._simple_p_enter).nanoseconds / 1e9
+        if self._simple_p_phase == 'DRIVE':
+            if elapsed >= self.simple_pulse_rotate:
+                self._stop()
+                self._simple_p_phase = 'REST'
+                self._simple_p_enter = now
+            else:
+                self._drive(angular_z=self._simple_p_cmd)
+            return
+
+        if self._simple_p_phase == 'REST':
+            if elapsed >= self.simple_pulse_rest:
+                self._simple_p_phase = 'IDLE'
+                self._simple_p_enter = now
+            self._stop()
 
     def _reset_transient(self):
         self.alarm_latched = False
@@ -449,21 +550,30 @@ class BrainNode(Node):
                 self._lost_since = now
             lost_elapsed = (now - self._lost_since).nanoseconds / 1e9
             if lost_elapsed < self.lost_fire_grace_sec:
+                self._reset_simple_pulse_fsm(reset_seek_sign=False)
                 self._stop()
                 self._log_simple_progress(
                     f'simple: LOST_FIRE_GRACE {lost_elapsed:.1f}/{self.lost_fire_grace_sec:.1f}s '
-                    f'armed={self._simple_mission_armed} (confirm resets until reacquire)'
+                    f'armed={self._simple_mission_armed} seek={self.simple_seek_mode} '
+                    f'(confirm resets until reacquire)'
                 )
                 return
-            self._drive(angular_z=self.rot_speed)
+            if self.simple_seek_mode == 'pulse':
+                wz = self._simple_p_seek_sign * self.rot_speed
+                self._simple_output_rotation(wz, True)
+            else:
+                self._simple_output_rotation(self.rot_speed, False)
             self._log_simple_progress(
-                f'simple: SEEK_SPIN wz={self.rot_speed:.0f} armed={self._simple_mission_armed} '
+                f'simple: SEEK_SPIN seek={self.simple_seek_mode} '
+                f'armed={self._simple_mission_armed} '
                 f'fire_confirm={self._fire_confirm_accum:.1f}/{self.simple_fire_confirm_sec:.1f}s'
             )
             return
 
-        # Have fire
+        had_lost = self._lost_since is not None
         self._lost_since = None
+        if had_lost:
+            self._reset_simple_pulse_fsm(reset_seek_sign=False)
 
         if not self._simple_mission_armed:
             self._fire_confirm_accum += self._brain_dt
@@ -479,24 +589,27 @@ class BrainNode(Node):
             direction = -1.0 if offset > 0 else 1.0
             side = 'left' if direction > 0 else 'right'
             wz = direction * self.rot_speed
-            self._drive(angular_z=wz)
+            self._simple_output_rotation(wz, False)
             self._log_simple_progress(
-                f'simple: TRACK_FIRE x_off={offset:+.3f} rotate_{side} wz={wz:.0f} '
+                f'simple: TRACK_FIRE seek={self.simple_seek_mode} x_off={offset:+.3f} '
+                f'rotate_{side} wz_cmd={wz:.0f} '
                 f'armed={self._simple_mission_armed} |x|≤{self.simple_mission_center_band:.2f} '
                 f'confirm={self._fire_confirm_accum:.1f}/{self.simple_fire_confirm_sec:.1f}s'
             )
             return
 
-        self._stop()
+        self._simple_output_rotation(0.0, False)
         if not self._simple_mission_armed:
             self._log_simple_progress(
-                f'simple: CENTERED_HOLD confirm={self._fire_confirm_accum:.1f}/'
+                f'simple: CENTERED_HOLD seek={self.simple_seek_mode} '
+                f'confirm={self._fire_confirm_accum:.1f}/'
                 f'{self.simple_fire_confirm_sec:.1f}s (|x|≤{self.simple_mission_center_band:.2f})'
             )
             return
         self._centered_hold_sec += self._brain_dt
         self._log_simple_progress(
-            f'simple: DWELL_BEFORE_WARN center_hold={self._centered_hold_sec:.1f}/'
+            f'simple: DWELL_BEFORE_WARN seek={self.simple_seek_mode} '
+            f'center_hold={self._centered_hold_sec:.1f}/'
             f'{self.center_hold_before_warning:.1f}s armed=yes'
         )
         if self._centered_hold_sec >= self.center_hold_before_warning:
@@ -604,13 +717,15 @@ class BrainNode(Node):
 
     def _tick_extinguishing(self):
         elapsed = self._time_in_state()
-        # Match tested solenoid pulse / firmware EXT_PIN_PULL_MS (~1 s on bench harness).
+        # Match firmware: E,1 ~EXT_PIN_PULL_MS, E,2 advance+dwell then auto E,3 retract.
         pin_pull_dur = 1.0
+        t_after_pin = pin_pull_dur + self.ext_stepper_advance + self.ext_stepper_dwell
+        t_after_retract = t_after_pin + self.ext_stepper_retract
         if elapsed < pin_pull_dur:
             self._send_ext(1)
-        elif elapsed < pin_pull_dur + self.discharge_secs:
+        elif elapsed < t_after_pin:
             self._send_ext(2)
-        elif elapsed < pin_pull_dur + self.discharge_secs + 3.0:
+        elif elapsed < t_after_retract:
             self._send_ext(3)
         else:
             self._send_ext(4)

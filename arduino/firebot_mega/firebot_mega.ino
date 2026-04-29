@@ -15,8 +15,9 @@
  *
  * 1) ROS bridge protocol (used by the Pi, machine-friendly):
  *      M,<vx>,<vy>,<wz>       drive, each in -255..255 (vy ignored).
- *      E,<phase>              extinguisher: 0=off 1=pin_pull 2=screw_advance
- *                             3=screw_retract 4=stop
+ *      E,<phase>              extinguisher: 0=off 1=pin_pull 2=screw_advance (runs
+ *                             ~5.3 s, holds ~10 s at depth, auto retract) then Pi
+ *                             sends E,3 or Mega continues sequence; 3=retract 4=stop
  *      W,<mode>               warning: 0=off 1=steady 2=countdown_beep
  *      S                      status request -> 'D,encA,encB,us,ir,mic,state'
  *      R                      e-stop (all outputs LOW, stepper disabled)
@@ -165,6 +166,7 @@ const uint16_t STEP_RAMP_END_HALF_US   = 170;
 const int16_t  STEP_RAMP_DELTA_HALF_US = -10;
 const uint8_t  STEP_RAMP_STEPS_PER_BAND = 40;
 const uint32_t EXT_STEPPER_RUN_MS = 5300;
+const uint32_t EXT_STEPPER_HOLD_MS = 10000;  // dwell at bottom after advance, before retract (Pi E,2)
 const uint32_t EXT_PIN_PULL_MS    = 1000;
 const uint32_t GO_PRE_SOL_MS   = 3000;
 const uint32_t GO_POST_SOL_MS  = 3000;
@@ -376,6 +378,16 @@ static void resetStepperRamp() {
   g_step_last_half_us = micros();
 }
 
+/** Pi-driven E,2 / E,3: run at cruise step rate immediately (no slow ramp). */
+static void armStepperFullSpeed() {
+  g_step_half_us = STEP_RAMP_END_HALF_US;
+  g_ramp_pulses_at_speed = 0;
+  g_stepper_ramp_complete = true;
+  digitalWrite(PIN_STEP, LOW);
+  g_step_line_high = 0;
+  g_step_last_half_us = micros();
+}
+
 /** Stop bench "GO" sequence. @param silent if true, no L,go_cancelled line */
 static void cancelGoSequence(bool silent) {
   bool was_active = (g_goseq != GOSEQ_OFF && g_goseq != GOSEQ_DONE);
@@ -418,6 +430,10 @@ static void startExtinguisherPhase(uint8_t phase) {
   if (g_goseq != GOSEQ_OFF && g_goseq != GOSEQ_DONE && phase >= 1 && phase <= 3)
     return;
 
+  // Pi may keep sending E,2 every tick; never restart advance during retract/stop.
+  if (phase == 2 && (g_ext_phase == 3 || g_ext_phase == 4))
+    return;
+
   // Same E phase as last apply (Pi publishes every tick): never cancel go / reset outputs.
   if (phase == g_ext_phase)
     return;
@@ -444,7 +460,7 @@ static void startExtinguisherPhase(uint8_t phase) {
       digitalWrite(PIN_DIR, LOW);
       delayMicroseconds(5);
       g_step_dir = +1;
-      resetStepperRamp();
+      armStepperFullSpeed();
       g_state = FW_EXTINGUISHING;
       break;
     case 3:  // retract (same DIR as reverseStepperForDuration: HIGH)
@@ -452,7 +468,7 @@ static void startExtinguisherPhase(uint8_t phase) {
       digitalWrite(PIN_DIR, HIGH);
       delayMicroseconds(5);
       g_step_dir = -1;
-      resetStepperRamp();
+      armStepperFullSpeed();
       g_state = FW_EXTINGUISHING;
       break;
     case 4:  // stop
@@ -478,8 +494,19 @@ static void serviceExtinguisher() {
     // the Pi issues the next E command.
     return;
   }
-  if (g_ext_phase == 2 && elapsed >= EXT_STEPPER_RUN_MS) {
-    startExtinguisherPhase(4);
+  if (g_ext_phase == 2) {
+    uint32_t e = millis() - g_ext_phase_start_ms;
+    if (e < EXT_STEPPER_RUN_MS) {
+      // advance stepping — serviceStepper() drives
+    } else if (e < EXT_STEPPER_RUN_MS + EXT_STEPPER_HOLD_MS) {
+      if (g_step_dir != 0) {
+        g_step_dir = 0;
+        digitalWrite(PIN_STEP, LOW);
+        g_step_line_high = 0;
+      }
+    } else {
+      startExtinguisherPhase(3);
+    }
   } else if (g_ext_phase == 3 && elapsed >= EXT_STEPPER_RUN_MS) {
     startExtinguisherPhase(4);
   }

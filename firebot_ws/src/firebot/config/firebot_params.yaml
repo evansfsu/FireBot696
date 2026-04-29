@@ -48,7 +48,11 @@ brain_node:
     search_timeout_sec: 45.0
     confirm_timeout_sec: 30.0
     warning_seconds: 10
+    # Legacy; extinguish timing uses ext_stepper_* below (must match Mega ms constants).
     discharge_seconds: 6.0
+    ext_stepper_advance_sec: 5.3
+    ext_stepper_dwell_sec: 10.0
+    ext_stepper_retract_sec: 5.3
     complete_hold_sec: 3.0
 
     approach_pulse_ms: 500
@@ -75,6 +79,12 @@ brain_node:
 
     simple_search_timeout_sec: 0.0
     simple_progress_log_period_sec: 1.0
+    simple_seek_mode: 'continuous'
+    simple_pulse_rotate_sec: 0.25
+    simple_pulse_rest_sec: 0.35
+    simple_pulse_min_interval_sec: 3.0
+    simple_pulse_seek_alternate: true
+    simple_pulse_seek_sign: 1.0
 
 # rotation_center_test_node — edit here for quick tuning (host-vision + rotation launch).
 rotation_center_test:
