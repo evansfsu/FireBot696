@@ -7,10 +7,14 @@ Behavior
 --------
 1. WAIT_FIRE — Stop. Accumulate ``fire_continuous_sec`` while ``detected`` and confidence are OK;
    reset to 0 on any missed frame. Log ~1 Hz: ``waiting_for_align: fire_continuous= X / Y s`` (default Y=12 s).
-2. ALIGN — After ``fire_confirm_sec`` (default 12 s), use pulse-rotate (``pulse_rotate_sec`` drive,
-   ``pulse_rest_sec`` coast), only ``angular.z`` (skid-steer in place), matching brain SEARCHING
-   sign: ``angular_z = rotate_speed * (-1 if x_offset > 0 else +1)`` toward center.
-   If fire is lost, SEEK bursts use ``seek_rotation_sign`` (±1), alternating when ``seek_alternate``.
+2. ALIGN — After ``fire_confirm_sec`` (default 12 s), pulse-rotate: ``pulse_rotate_sec`` drive,
+   ``pulse_rest_sec`` coast, at most one new burst every ``pulse_min_interval_sec`` (default 3 s).
+   Only ``angular.z``; sign matches brain SEARCHING. SEEK uses ``seek_rotation_sign`` / ``seek_alternate``.
+
+**Center band:** ``center_band_frac`` (default **0.75**) = treat the middle fraction of the frame width
+as "centered": ``|x_offset| <= center_band_frac`` (for 0.75, only the outer ~12.5% each side nudges).
+
+Tune times in ``firebot_params.yaml`` under ``rotation_center_test: ros__parameters``.
 
 x_offset is -1..+1 (negative = frame left). This matches ``vision_node`` and ``brain_node``.
 
@@ -22,7 +26,7 @@ Examples::
   ros2 launch firebot rotation_center_test.launch.py
 
   ros2 run firebot rotation_center_test_node --ros-args \\
-    -p fire_confirm_sec:=12.0 -p pulse_rotate_sec:=0.5 -p pulse_rest_sec:=0.35
+    -p center_band_frac:=0.75 -p pulse_rotate_sec:=0.3 -p pulse_min_interval_sec:=3.0
 """
 
 from __future__ import annotations
@@ -52,8 +56,11 @@ class RotationCenterTestNode(Node):
         self.declare_parameter('fire_confirm_sec', 12.0)
         self.declare_parameter('pulse_rotate_sec', 0.5)
         self.declare_parameter('pulse_rest_sec', 0.35)
+        # Minimum time between *starts* of rotation bursts (limits jerk; e.g. one burst per 3 s).
+        self.declare_parameter('pulse_min_interval_sec', 3.0)
         self.declare_parameter('rotate_speed', 32.0)
-        self.declare_parameter('center_offset_thresh', 0.08)
+        # Middle fraction of frame width treated as "centered" |x_offset| <= this (0.75 ≈ middle 75%).
+        self.declare_parameter('center_band_frac', 0.75)
         self.declare_parameter('confidence_threshold', 0.25)
         self.declare_parameter('seek_rotation_sign', 1.0)
         self.declare_parameter('seek_alternate', True)
@@ -64,8 +71,10 @@ class RotationCenterTestNode(Node):
         self._fire_confirm = float(self.get_parameter('fire_confirm_sec').value)
         self._pulse_rotate = float(self.get_parameter('pulse_rotate_sec').value)
         self._pulse_rest = float(self.get_parameter('pulse_rest_sec').value)
+        self._pulse_min_interval = float(self.get_parameter('pulse_min_interval_sec').value)
         self._rot_speed = float(self.get_parameter('rotate_speed').value)
-        self._center_tol = float(self.get_parameter('center_offset_thresh').value)
+        self._center_band = float(self.get_parameter('center_band_frac').value)
+        self._center_band = max(0.02, min(1.0, self._center_band))
         self._conf_thresh = float(self.get_parameter('confidence_threshold').value)
         self._seek_sign = float(self.get_parameter('seek_rotation_sign').value)
         self._seek_sign = 1.0 if self._seek_sign >= 0 else -1.0
@@ -87,11 +96,14 @@ class RotationCenterTestNode(Node):
         self._last_wait_log = self.get_clock().now()
         self._last_centered_log = self.get_clock().now()
         self._current_seek_sign = self._seek_sign
+        self._last_drive_start = None  # rclpy.time.Time; None = no burst yet in ALIGN
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
-            'rotation_center_test_node up — publishes /cmd/drive; '
-            'do not run brain_node concurrently'
+            'rotation_center_test_node up — /cmd/drive; '
+            f'center_band_frac={self._center_band:.2f} pulse_rotate={self._pulse_rotate:.2f}s '
+            f'pulse_rest={self._pulse_rest:.2f}s min_interval={self._pulse_min_interval:.2f}s '
+            '(do not run brain_node concurrently)'
         )
 
     def _on_det(self, msg: FireDetection) -> None:
@@ -102,7 +114,7 @@ class RotationCenterTestNode(Node):
         return bool(d.detected) and float(d.confidence) >= self._conf_thresh
 
     def _centered(self) -> bool:
-        return abs(float(self._latest.x_offset)) <= self._center_tol
+        return abs(float(self._latest.x_offset)) <= self._center_band
 
     def _drive(self, angular_z: float) -> None:
         t = Twist()
@@ -155,6 +167,7 @@ class RotationCenterTestNode(Node):
                 self._mode = Mode.ALIGN
                 self._pulse = PulsePhase.IDLE
                 self._phase_enter = now
+                self._last_drive_start = None
             return
 
         # ALIGN
@@ -167,6 +180,7 @@ class RotationCenterTestNode(Node):
                 self._last_centered_log = now
                 self.get_logger().info(
                     f'action=CENTERED in_frame=yes x_offset={self._latest.x_offset:.3f} '
+                    f'(band |off|<={self._center_band:.2f}) '
                     f'fire_continuous={self._fire_continuous_sec:.2f}s'
                 )
             return
@@ -190,7 +204,13 @@ class RotationCenterTestNode(Node):
                 self._stop()
             return
 
-        # IDLE — plan next pulse
+        # IDLE — plan next pulse (rate-limited)
+        if self._last_drive_start is not None:
+            gap = (now - self._last_drive_start).nanoseconds / 1e9
+            if gap < self._pulse_min_interval:
+                self._stop()
+                return
+
         if not self._is_fire():
             sign = self._current_seek_sign
             self._pulse_angular_z = sign * self._rot_speed
@@ -213,6 +233,7 @@ class RotationCenterTestNode(Node):
 
         self._pulse = PulsePhase.DRIVE
         self._phase_enter = now
+        self._last_drive_start = now
         self._drive(self._pulse_angular_z)
 
 

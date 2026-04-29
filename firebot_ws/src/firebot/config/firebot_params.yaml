@@ -62,6 +62,20 @@ brain_node:
     mic_alarm_threshold: 600
     mic_hold_ms: 500
 
+# rotation_center_test_node — edit here for quick tuning (host-vision + rotation launch).
+rotation_center_test:
+  ros__parameters:
+    fire_confirm_sec: 12.0
+    pulse_rotate_sec: 0.5
+    pulse_rest_sec: 0.35
+    pulse_min_interval_sec: 3.0
+    rotate_speed: 32.0
+    # Middle fraction of frame width counts as centered (|x_offset| <= value). 0.75 ≈ middle 75%.
+    center_band_frac: 0.75
+    confidence_threshold: 0.25
+    seek_rotation_sign: 1.0
+    seek_alternate: true
+
 arduino_bridge_node:
   ros__parameters:
     serial_port: "/dev/ttyACM0"

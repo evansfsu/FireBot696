@@ -51,6 +51,7 @@ def generate_launch_description():
                 package='firebot',
                 executable='rotation_center_test_node',
                 name='rotation_center_test',
+                parameters=[config],
                 output='screen',
             ),
         ]
