@@ -16,13 +16,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     v4l-utils \
  && rm -rf /var/lib/apt/lists/*
 
+# Use case … esac so a missing || in [ … ] … [ … ] can’t break the shell (Dockerfile gotcha).
 RUN arch="$(dpkg --print-architecture)" && \
     apt-get update && \
-    if [ "$arch" = "arm64" ] || [ "$arch" = "armhf" ]; then \
-      apt-get install -y --no-install-recommends python3-picamera2; \
-    else \
-      echo "[docker] skipping python3-picamera2 on $arch (not in Ubuntu repos; OpenCV camera path used)"; \
-    fi && \
+    case "$arch" in \
+      arm64|armhf) \
+        apt-get install -y --no-install-recommends python3-picamera2 \
+          || echo "[docker] WARN: python3-picamera2 failed; vision_node uses OpenCV fallback" ;; \
+      *) \
+        echo "[docker] skipping python3-picamera2 on $arch (amd64 has no deb)" ;; \
+    esac && \
     rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir \
