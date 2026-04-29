@@ -9,6 +9,11 @@ vision_node:
     fire_class_name: "Fire"
     camera_width: 640
     camera_height: 480
+    # Same as scripts/rpi_test_yolo_fire.py --video-mode (still stream is often stale in a timer loop).
+    picamera_video_mode: true
+    picamera_warmup_sec: 1.0
+    # V4L fallback when picamera2 fails in Docker; "" = OpenCV index 0.
+    opencv_video_device: "/dev/video0"
     # Match ~1–3 FPS on Pi + YOLO; brain motion is tuned for low-rate detections.
     detection_fps: 3.0
     # When true, publishes sensor_msgs/Image on /fire/debug_image (BGR, boxes) for

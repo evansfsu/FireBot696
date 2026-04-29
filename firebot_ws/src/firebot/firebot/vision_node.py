@@ -23,6 +23,8 @@ try:
 except ImportError:
     YOLO_AVAILABLE = False
 
+import time
+
 import cv2
 
 
@@ -40,6 +42,11 @@ class VisionNode(Node):
         self.declare_parameter('camera_height', 480)
         self.declare_parameter('detection_fps', 3.0)
         self.declare_parameter('publish_debug_image', False)
+        # Match scripts/rpi_test_yolo_fire.py --video-mode; still mode often gives stale frames in loops.
+        self.declare_parameter('picamera_video_mode', True)
+        self.declare_parameter('picamera_warmup_sec', 1.0)
+        # OpenCV fallback: explicit path helps Docker (compose mounts /dev/video0). Use "" for index 0.
+        self.declare_parameter('opencv_video_device', '')
 
         self.model_path = self.get_parameter('model_path').value
         self.conf_threshold = float(self.get_parameter('confidence_threshold').value)
@@ -51,6 +58,14 @@ class VisionNode(Node):
         self.cam_h = int(self.get_parameter('camera_height').value)
         self.det_fps = float(self.get_parameter('detection_fps').value)
         self.publish_debug = bool(self.get_parameter('publish_debug_image').value)
+        self.picamera_video_mode = bool(self.get_parameter('picamera_video_mode').value)
+        self.picamera_warmup_sec = float(self.get_parameter('picamera_warmup_sec').value)
+        self.opencv_video_device = str(
+            self.get_parameter('opencv_video_device').value or ''
+        ).strip()
+
+        self._last_no_frame_log = 0.0
+        self._last_filtered_log = 0.0
 
         self.pub = self.create_publisher(FireDetection, '/fire/detection', 10)
         self.pub_debug = (
@@ -106,23 +121,46 @@ class VisionNode(Node):
         if PICAMERA_AVAILABLE:
             try:
                 cam = Picamera2()
-                config = cam.create_still_configuration(
-                    main={'size': (self.cam_w, self.cam_h), 'format': 'RGB888'}
-                )
+                size = (self.cam_w, self.cam_h)
+                if self.picamera_video_mode:
+                    config = cam.create_video_configuration(
+                        main={'size': size, 'format': 'RGB888'}
+                    )
+                    mode = 'video'
+                else:
+                    config = cam.create_still_configuration(
+                        main={'size': size, 'format': 'RGB888'}
+                    )
+                    mode = 'still'
                 cam.configure(config)
                 cam.start()
+                warm = max(0.0, self.picamera_warmup_sec)
+                if warm > 0:
+                    time.sleep(warm)
                 self.camera = cam
-                self.get_logger().info('picamera2 (ov5647) initialized')
+                self.get_logger().info(
+                    f'picamera2 initialized ({mode} {self.cam_w}x{self.cam_h}, warmup {warm:.1f}s)'
+                )
                 return
             except Exception as exc:
                 self.get_logger().warn(f'picamera2 init failed: {exc}')
                 self.camera = None
-        cap = cv2.VideoCapture(0)
+        dev = self.opencv_video_device
+        if dev.isdigit():
+            cap = cv2.VideoCapture(int(dev), cv2.CAP_V4L2)
+            dev_log = dev
+        else:
+            cap = cv2.VideoCapture(dev, cv2.CAP_V4L2) if dev else cv2.VideoCapture(0, cv2.CAP_V4L2)
+            dev_log = dev or '0'
         if cap.isOpened():
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cam_w)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cam_h)
             self.camera = cap
-            self.get_logger().info('OpenCV VideoCapture(0) fallback opened')
+            self.get_logger().info(f'OpenCV V4L fallback opened (device {dev_log})')
         else:
             cap.release()
             self.get_logger().warn(
@@ -166,6 +204,13 @@ class VisionNode(Node):
         frame = self._capture()
         if frame is None or self.model is None:
             self._publish_empty()
+            if frame is None:
+                now = time.monotonic()
+                if now - self._last_no_frame_log >= 10.0:
+                    self.get_logger().warn(
+                        'no camera frame (check picamera / V4L device mapping in Docker)'
+                    )
+                    self._last_no_frame_log = now
             if frame is not None:
                 self._publish_debug_frame(frame, None)
             return
@@ -181,6 +226,7 @@ class VisionNode(Node):
 
         best_conf = 0.0
         best = None
+        seen_labels = []
         for r in results:
             if r.boxes is None:
                 continue
@@ -188,6 +234,7 @@ class VisionNode(Node):
                 conf = float(box.conf[0])
                 cls_id = int(box.cls[0])
                 label = self.model.names.get(cls_id, 'unknown')
+                seen_labels.append(f'{label}:{conf:.2f}')
                 if self.fire_only and label.strip().lower() != self.fire_class_name.strip().lower():
                     continue
                 if conf > best_conf:
@@ -200,6 +247,14 @@ class VisionNode(Node):
             msg.detected = False
             self.pub.publish(msg)
             self._publish_debug_frame(frame, None)
+            if seen_labels:
+                now = time.monotonic()
+                if now - self._last_filtered_log >= 5.0:
+                    self.get_logger().info(
+                        f'YOLO boxes {seen_labels} — fire_only wants '
+                        f'"{self.fire_class_name}"; set fire_class_name or fire_only: false to match weights'
+                    )
+                    self._last_filtered_log = now
             return
 
         h, w = frame.shape[:2]
