@@ -20,6 +20,7 @@ Examples (motors only — no stepper/solenoid/E commands):
 Other:
   python3 scripts/rpi_test_arduino_serial.py smoke   # legacy: spin + R estop
   python3 scripts/rpi_test_arduino_serial.py stepper --port /dev/ttyACM0   # lead-screw only (E,2)
+  python3 scripts/rpi_test_arduino_serial.py solenoid --port /dev/ttyACM0  # pin-pull only (E,1)
   python3 scripts/rpi_test_arduino_serial.py advance
 
 Stepper advance/retract: firmware runs ~5.3 s each (E,2 / E,3) then stops itself.
@@ -200,6 +201,21 @@ def cmd_drive(args, send, read_for) -> None:
     print("Done (drive).")
 
 
+def cmd_solenoid(args, send, read_for) -> None:
+    """Pin-pull solenoid only: E,1, hold, then E,0 (no stepper)."""
+    configure_sensors(send)
+    read_for(200)
+    send("E,1")
+    print(f"Solenoid: E,1 for ~{args.hold_s} s (pin pull), then E,0.")
+    if not args.dry_run:
+        time.sleep(args.hold_s)
+    else:
+        print(f"  (dry-run: would sleep {args.hold_s} s)")
+    send("E,0")
+    read_for(500)
+    print("Done (solenoid).")
+
+
 def cmd_stepper(args, send, read_for) -> None:
     """Lead-screw only (no solenoid, no go): E,2 ramp + run in firmware, then E,0."""
     configure_sensors(send)
@@ -350,6 +366,19 @@ def main() -> int:
     s.set_defaults(func=cmd_drive)
 
     s = sub.add_parser(
+        "solenoid",
+        parents=[serial_parent],
+        help="pin-pull only: E,1 hold, then E,0 (no lead-screw)",
+    )
+    s.add_argument(
+        "--hold-s",
+        type=float,
+        default=1.0,
+        help="seconds before E,0 (matches EXT_PIN_PULL_MS / bench ~1 s)",
+    )
+    s.set_defaults(func=cmd_solenoid)
+
+    s = sub.add_parser(
         "stepper",
         parents=[serial_parent],
         help="lead-screw only: E,2 (ramp + ~5.3 s in firmware), then E,0",
@@ -439,9 +468,9 @@ def main() -> int:
     if args.command == "dry-commands":
         print("# Motors only (no E/go/R); default PWM 75 like front_reverse_spin:")
         print("M,75,0,0  # refresh every ~300ms for multi-second moves; then M,0,0,0")
-        print("# Subcommands: motors | drive | spin | stepper | advance | retract | go")
+        print("# Subcommands: motors | drive | spin | solenoid | stepper | advance | retract | go")
         print("C,US,0\nC,IR,0\nC,MIC,0")
-        print("stepper  # or: advance — E,2 ~5.3s   E,3  # retract ~5.3s   E,0  # off")
+        print("solenoid       # E,1 ~1s hold  E,0   |  stepper/advance: E,2  E,3 retract  E,0")
         print("go  # human line, full sequence")
         print("S\nR")
         return 0
@@ -461,7 +490,7 @@ def main() -> int:
         return 0
 
     if args.func is None:
-        p.error("choose a subcommand (e.g. motors, spin, drive, probe) or use dry-commands")
+        p.error("choose a subcommand (e.g. motors, stepper, solenoid, probe) or use dry-commands")
 
     if args.dry_run:
 
