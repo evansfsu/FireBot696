@@ -6,7 +6,7 @@ No ROS and no vision — just pyserial.
 
 Full extinguisher + stepper bench sequence (same timing as solenoid_stepper_combined.ino):
   python3 scripts/rpi_test_arduino_serial.py go --port /dev/ttyACM0
-  # Note: use --port (not: go /dev/ttyACM0). Optional: --wait-s 35 to drain L,* lines longer.
+  # Note: use --port (not: go /dev/ttyACM0). Optional: --wait-s 30 to drain L,* lines longer.
 
 Examples (motors only — no stepper/solenoid/E commands):
   cd ~/Desktop/696/696   # example repo root on Pi
@@ -19,6 +19,7 @@ Examples (motors only — no stepper/solenoid/E commands):
 
 Other:
   python3 scripts/rpi_test_arduino_serial.py smoke   # legacy: spin + R estop
+  python3 scripts/rpi_test_arduino_serial.py stepper --port /dev/ttyACM0   # lead-screw only (E,2)
   python3 scripts/rpi_test_arduino_serial.py advance
 
 Stepper advance/retract: firmware runs ~5.3 s each (E,2 / E,3) then stops itself.
@@ -199,6 +200,23 @@ def cmd_drive(args, send, read_for) -> None:
     print("Done (drive).")
 
 
+def cmd_stepper(args, send, read_for) -> None:
+    """Lead-screw only (no solenoid, no go): E,2 ramp + run in firmware, then E,0."""
+    configure_sensors(send)
+    read_for(200)
+    send("E,2")
+    print(
+        "Stepper: forward only — Mega runs ramp + ~5.3 s (EXT_STEPPER_RUN_MS), then idle."
+    )
+    if not args.dry_run:
+        time.sleep(args.wait_s)
+    else:
+        print(f"  (dry-run: would sleep {args.wait_s} s)")
+    send("E,0")
+    read_for(500)
+    print("Done (stepper).")
+
+
 def cmd_advance(args, send, read_for) -> None:
     configure_sensors(send)
     read_for(200)
@@ -279,7 +297,7 @@ def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__,
         epilog="Serial options (--port, --baud, …) go after the subcommand, e.g.  "
-        "%(prog)s go --port /dev/ttyACM0 --wait-s 35",
+        "%(prog)s go --port /dev/ttyACM0 --wait-s 30",
     )
     p.add_argument("--version", action="store_true", help="print script revision and exit")
     p.add_argument("--dry-run", action="store_true", help="print actions only, no USB/serial")
@@ -332,9 +350,22 @@ def main() -> int:
     s.set_defaults(func=cmd_drive)
 
     s = sub.add_parser(
+        "stepper",
+        parents=[serial_parent],
+        help="lead-screw only: E,2 (ramp + ~5.3 s in firmware), then E,0",
+    )
+    s.add_argument(
+        "--wait-s",
+        type=float,
+        default=6.0,
+        help="sleep after E,2 before E,0 (use >5.3 if you lengthen EXT_STEPPER_RUN_MS)",
+    )
+    s.set_defaults(func=cmd_stepper)
+
+    s = sub.add_parser(
         "advance",
         parents=[serial_parent],
-        help="E,2 lead-screw forward (~5.3 s in firmware)",
+        help="alias of stepper: E,2 lead-screw forward (~5.3 s in firmware)",
     )
     s.add_argument("--wait-s", type=float, default=6.0, help="sleep after E,2 before E,0")
     s.set_defaults(func=cmd_advance)
@@ -350,7 +381,12 @@ def main() -> int:
         parents=[serial_parent],
         help="human 'go' = full bench solenoid+stepper sequence",
     )
-    s.add_argument("--wait-s", type=float, default=25.0, help="how long to drain serial after")
+    s.add_argument(
+        "--wait-s",
+        type=float,
+        default=25.0,
+        help="how long to drain serial after (full go ~28 s with 5.3 s screw runs)",
+    )
     s.set_defaults(func=cmd_go)
 
     s = sub.add_parser("estop", parents=[serial_parent], help="send R")
@@ -403,9 +439,9 @@ def main() -> int:
     if args.command == "dry-commands":
         print("# Motors only (no E/go/R); default PWM 75 like front_reverse_spin:")
         print("M,75,0,0  # refresh every ~300ms for multi-second moves; then M,0,0,0")
-        print("# Subcommands: motors | drive | spin   (~ stepper: advance | retract | go)")
+        print("# Subcommands: motors | drive | spin | stepper | advance | retract | go")
         print("C,US,0\nC,IR,0\nC,MIC,0")
-        print("E,2  # advance ~5.3s   E,3  # retract ~5.3s   E,0  # off")
+        print("stepper  # or: advance — E,2 ~5.3s   E,3  # retract ~5.3s   E,0  # off")
         print("go  # human line, full sequence")
         print("S\nR")
         return 0

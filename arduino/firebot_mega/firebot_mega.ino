@@ -410,11 +410,17 @@ static void handleMotorCmd(int vx, int /*vy*/, int wz) {
 }
 
 static void startExtinguisherPhase(uint8_t phase) {
-  cancelGoSequence(true);
-  // Pi may publish the same E phase every control cycle; avoid resetting the
-  // phase timer or the stepper/solenoid state while a timed phase is active.
-  if (phase == g_ext_phase && phase >= 1 && phase <= 3)
+  // Bench "go" owns solenoid + stepper timing. ROS bridge publishes E,1/E,2/E,3 on
+  // every tick — the old code called cancelGoSequence() first, which zeroed
+  // g_step_dir and killed the stepper mid-"go".
+  if (g_goseq != GOSEQ_OFF && g_goseq != GOSEQ_DONE && phase >= 1 && phase <= 3)
     return;
+
+  // Same E phase as last apply (Pi publishes every tick): never cancel go / reset outputs.
+  if (phase == g_ext_phase)
+    return;
+
+  cancelGoSequence(true);
 
   g_ext_phase = phase;
   g_ext_phase_start_ms = millis();
@@ -563,29 +569,36 @@ static void serviceGoSequence() {
 
 static void serviceStepper() {
   if (g_step_dir == 0) return;
-  uint16_t half = g_stepper_ramp_complete ? STEP_RAMP_END_HALF_US : g_step_half_us;
-  uint32_t now = micros();
-  if ((uint32_t)(now - g_last_step_toggle_us) < half) return;
+  // Emit every half-period that is already due. The main loop may be slow when
+  // the Pi polls 'S' (pulseIn on ultrasonic can block ~25 ms) or serial RX runs
+  // long; one toggle per loop() would stall the lead-screw to a crawl or look
+  // "dead" under load.
+  const uint16_t kMaxToggles = 600;
+  for (uint16_t n = 0; n < kMaxToggles; n++) {
+    uint16_t half = g_stepper_ramp_complete ? STEP_RAMP_END_HALF_US : g_step_half_us;
+    uint32_t now = micros();
+    if ((uint32_t)(now - g_last_step_toggle_us) < half) break;
 
-  g_step_level = !g_step_level;
-  digitalWrite(PIN_STEP, g_step_level);
-  g_last_step_toggle_us = now;
+    g_step_level = !g_step_level;
+    digitalWrite(PIN_STEP, g_step_level);
+    g_last_step_toggle_us += half;
 
-  if (g_stepper_ramp_complete) return;
+    if (g_stepper_ramp_complete) continue;
 
-  g_ramp_edge_flip ^= 1;
-  if (g_ramp_edge_flip != 0) return;
+    g_ramp_edge_flip ^= 1;
+    if (g_ramp_edge_flip != 0) continue;
 
-  g_ramp_pulses_at_speed++;
-  if (g_ramp_pulses_at_speed < STEP_RAMP_STEPS_PER_BAND) return;
+    g_ramp_pulses_at_speed++;
+    if (g_ramp_pulses_at_speed < STEP_RAMP_STEPS_PER_BAND) continue;
 
-  g_ramp_pulses_at_speed = 0;
-  int next = (int)g_step_half_us + STEP_RAMP_DELTA_HALF_US;
-  if (next >= (int)STEP_RAMP_END_HALF_US) {
-    g_step_half_us = (uint16_t)next;
-  } else {
-    g_step_half_us = STEP_RAMP_END_HALF_US;
-    g_stepper_ramp_complete = true;
+    g_ramp_pulses_at_speed = 0;
+    int next = (int)g_step_half_us + STEP_RAMP_DELTA_HALF_US;
+    if (next >= (int)STEP_RAMP_END_HALF_US) {
+      g_step_half_us = (uint16_t)next;
+    } else {
+      g_step_half_us = STEP_RAMP_END_HALF_US;
+      g_stepper_ramp_complete = true;
+    }
   }
 }
 
