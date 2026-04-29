@@ -9,6 +9,7 @@ import rclpy
 from rclpy.node import Node
 
 from firebot_interfaces.msg import FireDetection
+from sensor_msgs.msg import Image
 
 try:
     from picamera2 import Picamera2
@@ -38,6 +39,7 @@ class VisionNode(Node):
         self.declare_parameter('camera_width', 640)
         self.declare_parameter('camera_height', 480)
         self.declare_parameter('detection_fps', 3.0)
+        self.declare_parameter('publish_debug_image', False)
 
         self.model_path = self.get_parameter('model_path').value
         self.conf_threshold = float(self.get_parameter('confidence_threshold').value)
@@ -48,8 +50,14 @@ class VisionNode(Node):
         self.cam_w = int(self.get_parameter('camera_width').value)
         self.cam_h = int(self.get_parameter('camera_height').value)
         self.det_fps = float(self.get_parameter('detection_fps').value)
+        self.publish_debug = bool(self.get_parameter('publish_debug_image').value)
 
         self.pub = self.create_publisher(FireDetection, '/fire/detection', 10)
+        self.pub_debug = (
+            self.create_publisher(Image, '/fire/debug_image', 2)
+            if self.publish_debug
+            else None
+        )
 
         self._init_camera()
         self._init_model()
@@ -60,6 +68,38 @@ class VisionNode(Node):
             f'vision_node up: model={self.model_path}, '
             f'cam={self.cam_w}x{self.cam_h}@{self.det_fps:.1f}Hz'
         )
+        if self.pub_debug is not None:
+            self.get_logger().info('publishing /fire/debug_image for desktop preview')
+
+    def _publish_debug_frame(self, frame_rgb, best):
+        """BGR8 Image with optional YOLO box (for Pi desktop rqt_image_view)."""
+        if self.pub_debug is None or frame_rgb is None:
+            return
+        vis = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        if best is not None:
+            conf, label, x1, y1, x2, y2 = best
+            tic = (0, 255, 0)
+            cv2.rectangle(vis, (int(x1), int(y1)), (int(x2), int(y2)), tic, 2)
+            cv2.putText(
+                vis,
+                f'{label} {conf:.2f}',
+                (int(x1), max(24, int(y1) - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                tic,
+                1,
+                cv2.LINE_AA,
+            )
+        msg = Image()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'camera_optical_frame'
+        msg.height = vis.shape[0]
+        msg.width = vis.shape[1]
+        msg.encoding = 'bgr8'
+        msg.is_bigendian = 0
+        msg.step = msg.width * 3
+        msg.data = vis.tobytes()
+        self.pub_debug.publish(msg)
 
     def _init_camera(self):
         self.camera = None
@@ -120,6 +160,8 @@ class VisionNode(Node):
         frame = self._capture()
         if frame is None or self.model is None:
             self._publish_empty()
+            if frame is not None:
+                self._publish_debug_frame(frame, None)
             return
 
         results = self.model.predict(
@@ -151,6 +193,7 @@ class VisionNode(Node):
         if best is None:
             msg.detected = False
             self.pub.publish(msg)
+            self._publish_debug_frame(frame, None)
             return
 
         h, w = frame.shape[:2]
@@ -170,6 +213,7 @@ class VisionNode(Node):
         msg.x_offset = float(cx - 0.5) * 2.0  # normalized -1..1 (left/right)
         msg.label = str(label)
         self.pub.publish(msg)
+        self._publish_debug_frame(frame, best)
 
     def destroy_node(self):
         cam = getattr(self, 'camera', None)

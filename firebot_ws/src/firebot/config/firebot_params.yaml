@@ -10,6 +10,9 @@ vision_node:
     camera_height: 480
     # Match ~1–3 FPS on Pi + YOLO; brain motion is tuned for low-rate detections.
     detection_fps: 3.0
+    # When true, publishes sensor_msgs/Image on /fire/debug_image (BGR, boxes) for
+    # rqt_image_view / RViz on the Pi desktop. Set false on headless bots to save CPU.
+    publish_debug_image: true
 
 brain_node:
   ros__parameters:
