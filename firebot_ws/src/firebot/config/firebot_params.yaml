@@ -66,9 +66,9 @@ brain_node:
 rotation_center_test:
   ros__parameters:
     fire_confirm_sec: 12.0
-    pulse_rotate_sec: 0.5
+    pulse_rotate_sec: 0.25
     pulse_rest_sec: 0.35
-    pulse_min_interval_sec: 3.0
+    pulse_min_interval_sec: 5.0
     rotate_speed: 32.0
     # Middle fraction of frame width counts as centered (|x_offset| <= value). 0.75 ≈ middle 75%.
     center_band_frac: 0.75

@@ -8,7 +8,7 @@ Behavior
 1. WAIT_FIRE — Stop. Accumulate ``fire_continuous_sec`` while ``detected`` and confidence are OK;
    reset to 0 on any missed frame. Log ~1 Hz: ``waiting_for_align: fire_continuous= X / Y s`` (default Y=12 s).
 2. ALIGN — After ``fire_confirm_sec`` (default 12 s), pulse-rotate: ``pulse_rotate_sec`` drive,
-   ``pulse_rest_sec`` coast, at most one new burst every ``pulse_min_interval_sec`` (default 3 s).
+   ``pulse_rest_sec`` coast, at most one new burst every ``pulse_min_interval_sec`` (default 5 s).
    Only ``angular.z``; sign matches brain SEARCHING. SEEK uses ``seek_rotation_sign`` / ``seek_alternate``.
 
 **Center band:** ``center_band_frac`` (default **0.75**) = treat the middle fraction of the frame width
@@ -26,7 +26,7 @@ Examples::
   ros2 launch firebot rotation_center_test.launch.py
 
   ros2 run firebot rotation_center_test_node --ros-args \\
-    -p center_band_frac:=0.75 -p pulse_rotate_sec:=0.3 -p pulse_min_interval_sec:=3.0
+    -p center_band_frac:=0.75 -p pulse_rotate_sec:=0.25 -p pulse_min_interval_sec:=5.0
 """
 
 from __future__ import annotations
@@ -54,10 +54,10 @@ class RotationCenterTestNode(Node):
         super().__init__('rotation_center_test')
 
         self.declare_parameter('fire_confirm_sec', 12.0)
-        self.declare_parameter('pulse_rotate_sec', 0.5)
+        self.declare_parameter('pulse_rotate_sec', 0.25)
         self.declare_parameter('pulse_rest_sec', 0.35)
-        # Minimum time between *starts* of rotation bursts (limits jerk; e.g. one burst per 3 s).
-        self.declare_parameter('pulse_min_interval_sec', 3.0)
+        # Minimum time between *starts* of rotation bursts (limits jerk; e.g. one burst per 5 s).
+        self.declare_parameter('pulse_min_interval_sec', 5.0)
         self.declare_parameter('rotate_speed', 32.0)
         # Middle fraction of frame width treated as "centered" |x_offset| <= this (0.75 ≈ middle 75%).
         self.declare_parameter('center_band_frac', 0.75)
