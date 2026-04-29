@@ -6,7 +6,7 @@ No ROS and no vision — just pyserial.
 
 Full extinguisher + stepper bench sequence (same timing as solenoid_stepper_combined.ino):
   python3 scripts/rpi_test_arduino_serial.py go --port /dev/ttyACM0
-  # optional: --wait-s 35  to keep draining L,* log lines longer
+  # Note: use --port (not: go /dev/ttyACM0). Optional: --wait-s 35 to drain L,* lines longer.
 
 Examples (motors only — no stepper/solenoid/E commands):
   cd ~/Desktop/696/696   # example repo root on Pi

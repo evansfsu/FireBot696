@@ -457,6 +457,9 @@ static void startExtinguisherPhase(uint8_t phase) {
 }
 
 static void serviceExtinguisher() {
+  // Bench "go" owns solenoid + stepper timing; do not auto-expire Pi E,2/E,3 here.
+  if (g_goseq != GOSEQ_OFF && g_goseq != GOSEQ_DONE)
+    return;
   if (g_ext_phase == 0 || g_ext_phase == 4) return;
   uint32_t elapsed = millis() - g_ext_phase_start_ms;
   if (g_ext_phase == 1 && elapsed >= EXT_PIN_PULL_MS) {
@@ -479,6 +482,10 @@ static void startGoSequence() {
   }
   cancelTestState();
   cancelGoSequence(true);
+  // Drop any Pi E,* phase so we do not immediately hit EXT_STEPPER_RUN_MS and
+  // startExtinguisherPhase(4) -> cancelGoSequence() (killed stepper during 'go').
+  g_ext_phase = 0;
+  g_ext_phase_start_ms = millis();
   digitalWrite(PIN_SOL, LOW);
   g_step_dir = 0;
   digitalWrite(PIN_STEP, LOW);
