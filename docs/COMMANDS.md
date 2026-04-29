@@ -64,19 +64,22 @@ Requires `pip install pyserial` (or `python3-serial` from apt). Robot **on block
 ```bash
 cd ~/FireBot696
 
-# Optional: see lines without USB
-python3 scripts/rpi_test_arduino_serial.py smoke --dry-run
+# Default: motors only — forward + spin, then stop (no E/go/R; safe if stepper unwired)
+python3 scripts/rpi_test_arduino_serial.py
+python3 scripts/rpi_test_arduino_serial.py motors --dry-run
+python3 scripts/rpi_test_arduino_serial.py motors --minimal-protocol   # only M,... lines
 
-# Default USB port /dev/ttyACM0 — override with --port
-python3 scripts/rpi_test_arduino_serial.py smoke              # short spin + estop
 python3 scripts/rpi_test_arduino_serial.py spin --ms 4000 --wz 40
 python3 scripts/rpi_test_arduino_serial.py drive --vx 60 --wz 0 --ms 2000
+python3 scripts/rpi_test_arduino_serial.py smoke              # legacy: spin + estop
 python3 scripts/rpi_test_arduino_serial.py advance             # E,2 ~5.3 s, then E,0
 python3 scripts/rpi_test_arduino_serial.py retract
-python3 scripts/rpi_test_arduino_serial.py go --wait-s 30      # human 'go' line
+python3 scripts/rpi_test_arduino_serial.py go --wait-s 30     # human 'go' line
 python3 scripts/rpi_test_arduino_serial.py status
 python3 scripts/rpi_test_arduino_serial.py estop
 ```
+
+Subcommands: **`motors`** (default), **`spin`**, **`drive`**, **`smoke`**, **`advance`**, **`retract`**, **`go`**, **`status`**, **`estop`**, **`dry-commands`**.
 
 Common flags: `--port /dev/ttyACM0`, `--baud 115200`, `--settle 2.0` (seconds after open).
 

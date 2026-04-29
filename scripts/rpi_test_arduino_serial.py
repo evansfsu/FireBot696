@@ -4,13 +4,15 @@
 Uses the machine protocol in docs/PROTOCOL.md (115200 baud, newline-terminated).
 No ROS and no vision — just pyserial.
 
-Examples:
-  python3 scripts/rpi_test_arduino_serial.py smoke
-  python3 scripts/rpi_test_arduino_serial.py smoke --dry-run
-  python3 scripts/rpi_test_arduino_serial.py spin --ms 3000 --wz 40
-  python3 scripts/rpi_test_arduino_serial.py advance
-  python3 scripts/rpi_test_arduino_serial.py go
-  python3 scripts/rpi_test_arduino_serial.py --port /dev/ttyACM0 estop
+Examples (motors only — no stepper/solenoid/E commands):
+  python3 scripts/rpi_test_arduino_serial.py           # default = motors
+  python3 scripts/rpi_test_arduino_serial.py motors --dry-run
+  python3 scripts/rpi_test_arduino_serial.py drive --vx 50 --wz 0 --ms 1500
+  python3 scripts/rpi_test_arduino_serial.py spin --ms 3000 --wz 35
+
+Other:
+  python3 scripts/rpi_test_arduino_serial.py smoke      # legacy: brief spin + R estop
+  python3 scripts/rpi_test_arduino_serial.py advance    # E,2 lead-screw (~5.3 s)
 
 Stepper advance/retract: firmware runs ~5.3 s each (E,2 / E,3) then stops itself.
 Motor commands from the Pi: resend M,.. every <1 s (watchdog) for long moves.
@@ -65,6 +67,29 @@ def open_serial(port: str, baud: int, settle: float):
         if line:
             print(f"  < {line}")
     return ser
+
+
+def cmd_motors(args, send, read_for) -> None:
+    """Forward pulse, then spin — only M,.. commands (no E, go, or R unless --with-estop)."""
+    if not args.minimal_protocol:
+        configure_sensors(send)
+        read_for(200)
+        send("S")
+        read_for(250)
+    motor_hold(
+        send, args.vx, 0, 0, args.forward_ms / 1000.0, simulate=args.dry_run
+    )
+    read_for(150)
+    motor_hold(
+        send, 0, 0, args.wz, args.spin_ms / 1000.0, simulate=args.dry_run
+    )
+    read_for(200)
+    if args.with_estop:
+        send("R")
+        read_for(300)
+        print("Done (motors + estop).")
+    else:
+        print("Done (motors only — wheels stopped with M,0,0,0; no extinguisher/stepper).")
 
 
 def cmd_smoke(args, send, read_for) -> None:
@@ -166,7 +191,30 @@ def main() -> int:
 
     sub = p.add_subparsers(dest="command")
 
-    s = sub.add_parser("smoke", help="short spin + estop (original default test)")
+    s = sub.add_parser(
+        "motors",
+        help="drive test only: forward then spin (M commands); safe if stepper/solenoid unwired",
+    )
+    s.add_argument("--vx", type=int, default=45, help="forward PWM 0..255 (slow default)")
+    s.add_argument("--forward-ms", type=int, default=800, help="forward pulse length (ms)")
+    s.add_argument("--wz", type=int, default=40, help="spin rate for second pulse (in-place)")
+    s.add_argument("--spin-ms", type=int, default=1200, help="spin duration (ms)")
+    s.add_argument(
+        "--minimal-protocol",
+        action="store_true",
+        help="omit C,.. and S (only M lines — use if sensor config causes issues)",
+    )
+    s.add_argument(
+        "--with-estop",
+        action="store_true",
+        help="send R at end (normally unnecessary; wheels already stopped)",
+    )
+    s.set_defaults(func=cmd_motors)
+
+    s = sub.add_parser(
+        "smoke",
+        help="legacy: short spin then R estop (use `motors` for a normal drive check)",
+    )
     s.add_argument("--spin-speed", type=int, default=35, help="wz for M,0,0,wz")
     s.add_argument("--spin-ms", type=int, default=400, help="spin duration (ms)")
     s.set_defaults(func=cmd_smoke)
@@ -206,23 +254,31 @@ def main() -> int:
 
     args = p.parse_args()
     if not args.command:
-        args.command = "smoke"
-        args.func = cmd_smoke
-        if not hasattr(args, "spin_speed"):
-            args.spin_speed = 35
-        if not hasattr(args, "spin_ms"):
-            args.spin_ms = 400
+        args.command = "motors"
+        args.func = cmd_motors
+        for key, val in (
+            ("vx", 45),
+            ("forward_ms", 800),
+            ("wz", 40),
+            ("spin_ms", 1200),
+            ("minimal_protocol", False),
+            ("with_estop", False),
+        ):
+            if not hasattr(args, key):
+                setattr(args, key, val)
 
     if args.command == "dry-commands":
+        print("# Motors only (no E/go/R):")
+        print("M,45,0,0  # refresh every ~300ms for multi-second moves; then M,0,0,0")
+        print("# Subcommands: motors | drive | spin   (~ stepper: advance | retract | go)")
         print("C,US,0\nC,IR,0\nC,MIC,0")
-        print("M,0,0,35  # repeat every <1s for long moves")
         print("E,2  # advance ~5.3s   E,3  # retract ~5.3s   E,0  # off")
         print("go  # human line, full sequence")
         print("S\nR")
         return 0
 
     if args.func is None:
-        p.error("choose a subcommand (e.g. smoke, spin, advance) or use dry-commands")
+        p.error("choose a subcommand (e.g. motors, spin, drive, advance) or use dry-commands")
 
     if args.dry_run:
 

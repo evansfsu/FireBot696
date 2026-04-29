@@ -114,14 +114,17 @@ Arduino USB serial — **no ROS required** (`pyserial`). Put the robot **on bloc
 
 ```bash
 cd ~/FireBot696
-python3 scripts/rpi_test_arduino_serial.py --port /dev/ttyACM0 smoke    # short spin + estop
-python3 scripts/rpi_test_arduino_serial.py spin --ms 3000 --wz 40
+python3 scripts/rpi_test_arduino_serial.py --port /dev/ttyACM0        # default: motors only
+python3 scripts/rpi_test_arduino_serial.py motors --minimal-protocol
+python3 scripts/rpi_test_arduino_serial.py drive --vx 45 --wz 0 --ms 2000
+python3 scripts/rpi_test_arduino_serial.py spin --ms 3000 --wz 35
+python3 scripts/rpi_test_arduino_serial.py smoke                       # legacy: spin + estop
 python3 scripts/rpi_test_arduino_serial.py advance   # E,2 ~5.3 s lead-screw
 python3 scripts/rpi_test_arduino_serial.py go --wait-s 30
-python3 scripts/rpi_test_arduino_serial.py smoke --dry-run   # print only
+python3 scripts/rpi_test_arduino_serial.py motors --dry-run   # print only
 ```
 
-Subcommands: `smoke`, `spin`, `drive`, `advance`, `retract`, `go`, `status`, `estop`, `dry-commands`. Defaults: `--port /dev/ttyACM0`, `--baud 115200`, `--settle 2.0`.
+Subcommands: **`motors`** (default), **`spin`**, **`drive`**, **`smoke`**, **`advance`**, **`retract`**, **`go`**, **`status`**, **`estop`**, **`dry-commands`**. Defaults: `--port /dev/ttyACM0`, `--baud 115200`, `--settle 2.0`.
 
 YOLO + ROS keys (desktop or VNC; stack must be running, workspace sourced):
 
