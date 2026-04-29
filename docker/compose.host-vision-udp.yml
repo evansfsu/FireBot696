@@ -1,5 +1,7 @@
 # Merge with docker-compose.yml — host Picamera + live window (rpi_test_yolo_fire.py) feeds Docker brain.
 #
+# For **rotation_center_test** + same host vision, use compose.host-vision-udp-rotation.yml instead.
+#
 #   Terminal A (Pi, repo root, NO ROS required on host):
 #     python3 scripts/rpi_test_yolo_fire.py --video-mode --udp-bridge 127.0.0.1:7766
 #

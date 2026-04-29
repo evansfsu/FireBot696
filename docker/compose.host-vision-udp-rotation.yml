@@ -1,0 +1,17 @@
+# Host Picamera preview + UDP → rotation_center_test (no brain_node, no vision_node).
+#
+# Host (Terminal A, repo root):
+#   python3 scripts/rpi_test_yolo_fire.py --video-mode --udp-bridge 127.0.0.1:7766
+#
+# Docker (Terminal B):
+#   cd docker
+#   docker compose -f docker-compose.yml -f compose.host-vision-udp-rotation.yml up -d --build
+#
+services:
+  firebot:
+    environment:
+      - ROS_DOMAIN_ID=0
+      - FIREBOT_OPENCV_ONLY=0
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - FIREBOT_UDP_DETECTION_PORT=7766
+    command: ros2 launch firebot rotation_center_hostvision.launch.py
