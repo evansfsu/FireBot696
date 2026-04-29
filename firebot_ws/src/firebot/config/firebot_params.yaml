@@ -47,7 +47,7 @@ brain_node:
     rotate_speed: 32.0
     search_timeout_sec: 45.0
     confirm_timeout_sec: 30.0
-    warning_seconds: 5
+    warning_seconds: 10
     discharge_seconds: 6.0
     complete_hold_sec: 3.0
 
@@ -62,10 +62,13 @@ brain_node:
     mic_alarm_threshold: 600
     mic_hold_ms: 500
 
-    # --- simple end-to-end test (IDLE → SEARCHING → WARNING → EXTINGUISHING) ---
-    # When true: skip AWAITING_CONFIRM and APPROACHING. After SEARCHING keeps fire
-    # centered continuously for center_hold_before_warning_sec, go to WARNING.
+    # --- simple mission (see simple_mission_hostvision.launch.py overrides) ---
+    # When true: use idle_exit_min_fire_sec, simple_fire_confirm_sec, lost_fire_grace_sec,
+    # center_hold_before_warning_sec as documented in brain_node docstring.
     simple_mission_flow: false
+    idle_exit_min_fire_sec: 0.0
+    simple_fire_confirm_sec: 12.0
+    lost_fire_grace_sec: 5.0
     center_hold_before_warning_sec: 15.0
 
 # rotation_center_test_node — edit here for quick tuning (host-vision + rotation launch).
