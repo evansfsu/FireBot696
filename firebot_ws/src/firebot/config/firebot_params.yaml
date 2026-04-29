@@ -70,7 +70,9 @@ brain_node:
     simple_fire_confirm_sec: 12.0
     lost_fire_grace_sec: 5.0
     center_hold_before_warning_sec: 15.0
-    # Simple mission SEARCHING cap (0 = max of search_timeout and auto floor ~ confirm+center+graces+120).
+    # Simple mission: middle fraction of horizontal FOV counts as centered (rotation_test-style).
+    simple_mission_center_band_frac: 0.70
+
     simple_search_timeout_sec: 0.0
     simple_progress_log_period_sec: 1.0
 

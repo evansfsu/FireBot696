@@ -4,15 +4,18 @@ States: IDLE, SEARCHING, AWAITING_CONFIRM, APPROACHING, WARNING,
         EXTINGUISHING, COMPLETE.
 
 **Simple mission flow** (`simple_mission_flow: true`): IDLE stays put until
-``/alarm/trigger`` or ``idle_exit_min_fire_sec`` of continuous fire (filters
-noisy detections). In SEARCHING: accumulate ``simple_fire_confirm_sec`` (e.g. 12)
-of continuous fire to **arm**; brief loss of fire uses ``lost_fire_grace_sec``
-then **SEEK_SPIN** (same before and after arm; fire-confirm timer resets while
-lost). After armed, ``center_hold_before_warning_sec`` of continuous centering (fire
-still visible) → WARNING → ``warning_seconds`` → EXTINGUISHING → COMPLETE →
-IDLE (skips AWAITING_CONFIRM and APPROACHING). The first time IDLE → SEARCHING,
-``corner_exit_forward_sec`` / ``corner_exit_speed`` still apply (straight crawl
-before spin/center logic).
+``/alarm/trigger`` or ``idle_exit_min_fire_sec`` of continuous fire (typ. 3 s
+to reject brief noise). Centering uses ``simple_mission_center_band_frac``
+(|x_offset| in [-band,+band], same idea as rotation_center_test ``center_band_frac``),
+not the tight ``center_offset_thresh`` used in full-flow approach.
+Accumulate ``simple_fire_confirm_sec`` (e.g. 12) of continuous fire to **arm**;
+brief loss of fire uses ``lost_fire_grace_sec`` then **SEEK_SPIN** (same before
+and after arm; fire-confirm timer resets while lost). After armed,
+``center_hold_before_warning_sec`` of continuous centering (fire still visible
+with the wide band above) → WARNING → ``warning_seconds`` → EXTINGUISHING →
+COMPLETE → IDLE (skips AWAITING_CONFIRM and APPROACHING). The first time
+IDLE → SEARCHING, ``corner_exit_forward_sec`` / ``corner_exit_speed`` still apply
+(straight crawl before spin/center logic).
 
 Full-flow SEARCHING begins with a short straight forward segment (corner exit).
 Approach ends when the fire is centered and bbox area lies in
@@ -95,6 +98,8 @@ class BrainNode(Node):
         # Max time in SEARCHING for simple mission (0 = auto: max(search_timeout, confirm+center+120)).
         self.declare_parameter('simple_search_timeout_sec', 0.0)
         self.declare_parameter('simple_progress_log_period_sec', 1.0)
+        # Simple mission: |x_offset| <= this counts as "centered" (same idea as rotation_center_test center_band_frac).
+        self.declare_parameter('simple_mission_center_band_frac', 0.70)
 
         self.conf_thresh = float(self.get_parameter('confidence_threshold').value)
         self.stable_frames = int(self.get_parameter('stable_frames').value)
@@ -149,6 +154,10 @@ class BrainNode(Node):
             self.get_parameter('simple_progress_log_period_sec').value
         )
         self._simple_log_period = max(0.2, min(10.0, self._simple_log_period))
+        self.simple_mission_center_band = float(
+            self.get_parameter('simple_mission_center_band_frac').value
+        )
+        self.simple_mission_center_band = max(0.02, min(1.0, self.simple_mission_center_band))
 
         self.drive_pub = self.create_publisher(Twist, '/cmd/drive', 10)
         self.ext_pub = self.create_publisher(Int32, '/cmd/extinguisher', 10)
@@ -194,6 +203,7 @@ class BrainNode(Node):
             f'center_hold_before_warning={self.center_hold_before_warning:.1f}s, '
             f'idle_exit_min_fire={self.idle_exit_min_fire:.2f}s, '
             f'simple_fire_confirm={self.simple_fire_confirm_sec:.1f}s, '
+            f'simple_center_band=|x_off|<={self.simple_mission_center_band:.2f}, '
             f'search_timeout={self.search_timeout:.0f}s '
             f'simple_search_cap={self._effective_search_timeout_sec():.0f}s)'
         )
@@ -318,6 +328,10 @@ class BrainNode(Node):
 
     def _centered_enough(self) -> bool:
         return abs(float(self.latest_det.x_offset)) <= self.center_tol
+
+    def _simple_mission_centered(self) -> bool:
+        """Wide FOV band for simple mission (matches rotation_center_test semantics)."""
+        return abs(float(self.latest_det.x_offset)) <= self.simple_mission_center_band
 
     def _approach_gate_satisfied(self) -> bool:
         det = self.latest_det
@@ -459,7 +473,7 @@ class BrainNode(Node):
                     f'simple mission ARMED (fire confirm {self.simple_fire_confirm_sec:.1f}s)'
                 )
 
-        if not self._centered_enough():
+        if not self._simple_mission_centered():
             self._centered_hold_sec = 0.0
             offset = float(self.latest_det.x_offset)
             direction = -1.0 if offset > 0 else 1.0
@@ -468,7 +482,7 @@ class BrainNode(Node):
             self._drive(angular_z=wz)
             self._log_simple_progress(
                 f'simple: TRACK_FIRE x_off={offset:+.3f} rotate_{side} wz={wz:.0f} '
-                f'armed={self._simple_mission_armed} '
+                f'armed={self._simple_mission_armed} |x|≤{self.simple_mission_center_band:.2f} '
                 f'confirm={self._fire_confirm_accum:.1f}/{self.simple_fire_confirm_sec:.1f}s'
             )
             return
@@ -477,7 +491,7 @@ class BrainNode(Node):
         if not self._simple_mission_armed:
             self._log_simple_progress(
                 f'simple: CENTERED_HOLD confirm={self._fire_confirm_accum:.1f}/'
-                f'{self.simple_fire_confirm_sec:.1f}s (arming, x_offset within deadband)'
+                f'{self.simple_fire_confirm_sec:.1f}s (|x|≤{self.simple_mission_center_band:.2f})'
             )
             return
         self._centered_hold_sec += self._brain_dt

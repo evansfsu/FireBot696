@@ -1,0 +1,171 @@
+firebot-1  | [brain_node-3] [INFO] [1777494176.184289520] [brain_node]: simple: TRACK_FIRE x_off=+0.254 rotate_right wz=-32 armed=False confirm=6.5/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494177.186628000] [brain_node]: simple: CENTERED_HOLD confirm=7.5/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494178.283897018] [brain_node]: simple: CENTERED_HOLD confirm=8.6/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494179.284428147] [brain_node]: simple: CENTERED_HOLD confirm=9.6/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494180.284511702] [brain_node]: simple: TRACK_FIRE x_off=-0.246 rotate_left wz=32 armed=False confirm=10.6/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494181.384044035] [brain_node]: simple: LOST_FIRE_GRACE 0.8/5.0s armed=False (confirm resets until reacquire)
+firebot-1  | [brain_node-3] [INFO] [1777494182.384219960] [brain_node]: simple: LOST_FIRE_GRACE 1.8/5.0s armed=False (confirm resets until reacquire)
+firebot-1  | [brain_node-3] [INFO] [1777494183.387591923] [brain_node]: simple: LOST_FIRE_GRACE 2.8/5.0s armed=False (confirm resets until reacquire)
+firebot-1  | [brain_node-3] [INFO] [1777494184.387071441] [brain_node]: simple: LOST_FIRE_GRACE 3.8/5.0s armed=False (confirm resets until reacquire)
+firebot-1  | [brain_node-3] [INFO] [1777494185.485463940] [brain_node]: simple: CENTERED_HOLD confirm=0.2/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494186.584273810] [brain_node]: simple: CENTERED_HOLD confirm=1.3/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494187.684177346] [brain_node]: simple: CENTERED_HOLD confirm=2.4/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494188.684662790] [brain_node]: simple: CENTERED_HOLD confirm=3.4/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494189.684535382] [brain_node]: simple: CENTERED_HOLD confirm=4.4/12.0s (arming, x_offset within deadband)
+firebot-1  | [brain_node-3] [INFO] [1777494190.784331992] [brain_node]: simple: TRACK_FIRE x_off=+0.085 rotate_right wz=-32 armed=False confirm=5.5/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494191.884273677] [brain_node]: simple: TRACK_FIRE x_off=+0.081 rotate_right wz=-32 armed=False confirm=6.6/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494192.984637287] [brain_node]: simple: TRACK_FIRE x_off=+0.098 rotate_right wz=-32 armed=False confirm=7.7/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494193.988173453] [brain_node]: simple: TRACK_FIRE x_off=+0.107 rotate_right wz=-32 armed=False confirm=8.7/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494195.088992768] [brain_node]: simple: TRACK_FIRE x_off=+0.122 rotate_right wz=-32 armed=False confirm=9.8/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494196.183964415] [brain_node]: simple: TRACK_FIRE x_off=+0.115 rotate_right wz=-32 armed=False confirm=10.9/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494197.184769859] [brain_node]: simple: TRACK_FIRE x_off=+0.222 rotate_right wz=-32 armed=False confirm=11.9/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494197.284475618] [brain_node]: simple mission ARMED (fire confirm 12.0s)
+firebot-1  | [brain_node-3] [INFO] [1777494198.190006618] [brain_node]: simple: TRACK_FIRE x_off=+0.134 rotate_right wz=-32 armed=True confirm=12.0/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494199.286177839] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=0.9/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494200.383864913] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=2.0/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494201.386351486] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=3.0/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494202.488682152] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=4.1/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494203.485855003] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=5.1/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494204.583915929] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=6.2/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494205.584510632] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=7.2/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494206.584581427] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=8.2/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494207.687527723] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=9.3/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494208.787364241] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=10.4/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494209.883872388] [brain_node]: simple: TRACK_FIRE x_off=-0.082 rotate_left wz=32 armed=True confirm=12.0/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494210.884369536] [brain_node]: simple: TRACK_FIRE x_off=-0.084 rotate_left wz=32 armed=True confirm=12.0/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494211.885185609] [brain_node]: simple: TRACK_FIRE x_off=-0.087 rotate_left wz=32 armed=True confirm=12.0/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494212.983922164] [brain_node]: simple: TRACK_FIRE x_off=-0.101 rotate_left wz=32 armed=True confirm=12.0/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494213.985326738] [brain_node]: simple: TRACK_FIRE x_off=-0.100 rotate_left wz=32 armed=True confirm=12.0/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494214.985826422] [brain_node]: simple: TRACK_FIRE x_off=-0.106 rotate_left wz=32 armed=True confirm=12.0/12.0s
+firebot-1  | [brain_node-3] [INFO] [1777494216.088057218] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=0.3/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494217.184274014] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=1.4/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494218.184904495] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=2.4/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494219.286683142] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=3.5/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494220.388696734] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=4.6/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494221.484217122] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=5.7/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494222.489274548] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=6.7/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494223.485683991] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=7.7/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494224.585074176] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=8.8/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494225.686026675] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=9.9/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494226.784336526] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=11.0/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494227.785806526] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=12.0/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494228.785762173] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=13.0/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494229.886076451] [brain_node]: simple: DWELL_BEFORE_WARN center_hold=14.1/15.0s armed=yes
+firebot-1  | [brain_node-3] [INFO] [1777494230.786265857] [brain_node]: center hold 15.0s >= 15.0s -> WARNING
+firebot-1  | [brain_node-3] [INFO] [1777494230.789251765] [brain_node]: state: SEARCHING -> WARNING
+firebot-1  | [brain_node-3] [WARN] [1777494230.890162617] [brain_node]: warning countdown: 10s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494231.097184950] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494231.296044450] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494231.500446931] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494231.696965024] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494231.884486709] [brain_node]: warning countdown: 9s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494231.896284838] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494232.096116153] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494232.296236134] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494232.494911486] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494232.698845208] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494232.886433412] [brain_node]: warning countdown: 8s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494232.895965449] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494233.095047171] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494233.296087097] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494233.496174097] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494233.695183356] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494233.884665189] [brain_node]: warning countdown: 7s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494233.896664041] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494234.096408559] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494234.294909448] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494234.497049244] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494234.698377207] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494234.886146744] [brain_node]: warning countdown: 6s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494234.896742762] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494235.096128799] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494235.297345262] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494235.495345132] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494235.699467114] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494235.884744910] [brain_node]: warning countdown: 5s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494235.896544558] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494236.096177632] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494236.295183280] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494236.496414724] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494236.696322187] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494236.884130169] [brain_node]: warning countdown: 4s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494236.895141595] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494237.097429502] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494237.296771446] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494237.495227465] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494237.695559187] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494237.886977575] [brain_node]: warning countdown: 3s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494237.896101390] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494238.095015409] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494238.301712297] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494238.497938019] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494238.695272723] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494238.889654408] [brain_node]: warning countdown: 2s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494238.897487186] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494239.095562538] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494239.295089538] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494239.499715667] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494239.695493611] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494239.885413796] [brain_node]: warning countdown: 1s
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494239.895779074] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494240.095567630] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494240.295532296] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494240.496648592] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494240.695370463] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [WARN] [1777494240.884871425] [brain_node]: warning countdown: 0s
+firebot-1  | [brain_node-3] [INFO] [1777494240.885731703] [brain_node]: state: WARNING -> EXTINGUISHING
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494240.897160629] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494241.095359185] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494241.301156999] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494241.501187740] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494241.695707073] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494241.895285592] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494242.095543777] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494242.295418628] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494242.499233480] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494242.695818258] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494242.895195165] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494243.095770146] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494243.295598998] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494243.495447739] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494243.697279887] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494243.895520146] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494244.095834887] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494244.295786201] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494244.497609905] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494244.695512201] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494244.895462886] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494245.095370516] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494245.295277201] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494245.496650701] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494245.695577071] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494245.896184922] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494246.095464404] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494246.297225015] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494246.495531459] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494246.696970774] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494246.896988996] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494247.095310996] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494247.296113440] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494247.497162088] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494247.695566903] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494247.898222884] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494248.095979773] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494248.295363014] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494248.495954402] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494248.698968384] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494248.895389680] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494249.098072198] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494249.300094513] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494249.495628513] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494249.697955420] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494249.896832568] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494250.096272494] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494250.295423587] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494250.496675512] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494250.695824123] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494250.895442660] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [brain_node-3] [INFO] [1777494250.987358382] [brain_node]: state: EXTINGUISHING -> COMPLETE
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494251.099444456] [arduino_bridge_node]: mega: warn=1
+firebot-1  | [arduino_bridge_node-2] [INFO] [1777494251.197798642] [arduino_bridge_node]: mega: warn=0
+firebot-1  | [brain_node-3] [INFO] [1777494254.089033381] [brain_node]: state: COMPLETE -> IDLE

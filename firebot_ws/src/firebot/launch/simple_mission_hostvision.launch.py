@@ -7,8 +7,8 @@ and forward detections into ROS:
   python3 scripts/rpi_test_yolo_fire.py --video-mode --udp-bridge 127.0.0.1:PORT
 
 Use this launch for the **simple mission** state machine. It overrides ``brain_node``
-params: 2 s corner-exit forward when entering SEARCHING, 0.5 s stable fire to leave IDLE,
-12 s fire to arm, 5 s grace when lost, in-place spin to reacquire, 15 s centered (after arm)
+params: 2 s corner-exit forward when entering SEARCHING, **3.0 s** stable fire to leave IDLE,
+|x_offset|≤0.70 for “centered” (like rotation test ~70% FOV), 12 s fire to arm, 5 s grace when lost, in-place spin to reacquire, 15 s centered (after arm)
 → WARNING, 10 s WARNING → extinguish, 300 s SEARCHING cap before timeout to IDLE.
 
 Monitor timers: ``docker compose ... logs -f`` — look for lines prefixed with ``simple:``.
@@ -69,10 +69,11 @@ def generate_launch_description():
                     config,
                     {
                         'simple_mission_flow': True,
-                        'idle_exit_min_fire_sec': 0.5,
+                        'idle_exit_min_fire_sec': 3.0,
                         'simple_fire_confirm_sec': 12.0,
                         'lost_fire_grace_sec': 5.0,
                         'center_hold_before_warning_sec': 15.0,
+                        'simple_mission_center_band_frac': 0.70,
                         'warning_seconds': 10,
                         'corner_exit_forward_sec': 2.0,
                         'simple_search_timeout_sec': 300.0,

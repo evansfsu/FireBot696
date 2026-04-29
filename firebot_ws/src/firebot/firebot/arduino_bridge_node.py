@@ -67,6 +67,8 @@ class ArduinoBridgeNode(Node):
         self.create_subscription(Bool, '/cmd/estop', self._on_estop, 10)
 
         self.ser = None
+        # Mega echoes L,warn=N every poll; log only when N changes.
+        self._mega_last_warn_payload = None
         if SERIAL_AVAILABLE:
             try:
                 self.ser = serial.Serial(self.port, self.baud, timeout=0.05)
@@ -124,7 +126,14 @@ class ArduinoBridgeNode(Node):
             return
 
         if raw.startswith('L,'):
-            self.get_logger().info(f'mega: {raw[2:]}')
+            payload = raw[2:].strip()
+            if payload.startswith('warn='):
+                if payload == self._mega_last_warn_payload:
+                    return
+                self._mega_last_warn_payload = payload
+                self.get_logger().info(f'mega: {payload}')
+                return
+            self.get_logger().info(f'mega: {payload}')
             return
         if not raw.startswith('D,'):
             return
