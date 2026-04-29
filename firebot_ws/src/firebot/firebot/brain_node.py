@@ -6,10 +6,9 @@ States: IDLE, SEARCHING, AWAITING_CONFIRM, APPROACHING, WARNING,
 **Simple mission flow** (`simple_mission_flow: true`): IDLE stays put until
 ``/alarm/trigger`` or ``idle_exit_min_fire_sec`` of continuous fire (filters
 noisy detections). In SEARCHING: accumulate ``simple_fire_confirm_sec`` (e.g. 12)
-of continuous fire to **arm**; if fire is lost before that and entry was **not**
-via alarm, return to IDLE; if entry was via alarm, keep spinning. After armed,
-lost fire waits ``lost_fire_grace_sec`` then rotates in place to reacquire.
-After armed, ``center_hold_before_warning_sec`` of continuous centering (fire
+of continuous fire to **arm**; brief loss of fire uses ``lost_fire_grace_sec``
+then **SEEK_SPIN** (same before and after arm; fire-confirm timer resets while
+lost). After armed, ``center_hold_before_warning_sec`` of continuous centering (fire
 still visible) → WARNING → ``warning_seconds`` → EXTINGUISHING → COMPLETE →
 IDLE (skips AWAITING_CONFIRM and APPROACHING). The first time IDLE → SEARCHING,
 ``corner_exit_forward_sec`` / ``corner_exit_speed`` still apply (straight crawl
@@ -93,6 +92,9 @@ class BrainNode(Node):
         self.declare_parameter('simple_fire_confirm_sec', 12.0)
         # Simple flow: after armed, hold this long with no fire before starting seek spin.
         self.declare_parameter('lost_fire_grace_sec', 5.0)
+        # Max time in SEARCHING for simple mission (0 = auto: max(search_timeout, confirm+center+120)).
+        self.declare_parameter('simple_search_timeout_sec', 0.0)
+        self.declare_parameter('simple_progress_log_period_sec', 1.0)
 
         self.conf_thresh = float(self.get_parameter('confidence_threshold').value)
         self.stable_frames = int(self.get_parameter('stable_frames').value)
@@ -140,6 +142,13 @@ class BrainNode(Node):
         self.simple_fire_confirm_sec = max(0.0, self.simple_fire_confirm_sec)
         self.lost_fire_grace_sec = float(self.get_parameter('lost_fire_grace_sec').value)
         self.lost_fire_grace_sec = max(0.0, self.lost_fire_grace_sec)
+        self.simple_search_timeout_override = float(
+            self.get_parameter('simple_search_timeout_sec').value
+        )
+        self._simple_log_period = float(
+            self.get_parameter('simple_progress_log_period_sec').value
+        )
+        self._simple_log_period = max(0.2, min(10.0, self._simple_log_period))
 
         self.drive_pub = self.create_publisher(Twist, '/cmd/drive', 10)
         self.ext_pub = self.create_publisher(Int32, '/cmd/extinguisher', 10)
@@ -173,9 +182,9 @@ class BrainNode(Node):
         self._idle_fire_accum = 0.0
         self._simple_mission_armed = False
         self._fire_confirm_accum = 0.0
-        self._searching_had_alarm = False
         self._lost_since = None
         self._last_brain_tick = self.get_clock().now()
+        self._last_simple_log = self.get_clock().now()
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
@@ -184,8 +193,31 @@ class BrainNode(Node):
             f'simple_mission_flow={self.simple_mission_flow}, '
             f'center_hold_before_warning={self.center_hold_before_warning:.1f}s, '
             f'idle_exit_min_fire={self.idle_exit_min_fire:.2f}s, '
-            f'simple_fire_confirm={self.simple_fire_confirm_sec:.1f}s)'
+            f'simple_fire_confirm={self.simple_fire_confirm_sec:.1f}s, '
+            f'search_timeout={self.search_timeout:.0f}s '
+            f'simple_search_cap={self._effective_search_timeout_sec():.0f}s)'
         )
+
+    def _effective_search_timeout_sec(self) -> float:
+        """SEARCHING time limit: avoid simple-mission abort while confirming + centering + reacquire."""
+        if not self.simple_mission_flow:
+            return self.search_timeout
+        if self.simple_search_timeout_override > 0.0:
+            return self.simple_search_timeout_override
+        auto_floor = (
+            self.simple_fire_confirm_sec
+            + self.center_hold_before_warning
+            + 3.0 * self.lost_fire_grace_sec
+            + 120.0
+        )
+        return max(self.search_timeout, auto_floor)
+
+    def _log_simple_progress(self, line: str) -> None:
+        now = self.get_clock().now()
+        if (now - self._last_simple_log).nanoseconds / 1e9 < self._simple_log_period:
+            return
+        self._last_simple_log = now
+        self.get_logger().info(line)
 
     def _on_detection(self, msg: FireDetection):
         self.latest_det = msg
@@ -239,7 +271,6 @@ class BrainNode(Node):
         self.approach_pulse_driving = False
         if new_state == State.SEARCHING and old_state == State.IDLE:
             self.corner_exit_done = False
-            self._searching_had_alarm = self.alarm_latched
             self._simple_mission_armed = False
             self._fire_confirm_accum = 0.0
             self._lost_since = None
@@ -250,7 +281,6 @@ class BrainNode(Node):
             self._idle_fire_accum = 0.0
             self._simple_mission_armed = False
             self._fire_confirm_accum = 0.0
-            self._searching_had_alarm = False
             self._lost_since = None
         if new_state == State.SEARCHING and old_state != State.IDLE:
             self._centered_hold_sec = 0.0
@@ -350,8 +380,9 @@ class BrainNode(Node):
             self._set_state(State.SEARCHING)
 
     def _tick_searching(self):
-        if self._time_in_state() > self.search_timeout:
-            self.get_logger().info('search timeout; back to IDLE')
+        limit = self._effective_search_timeout_sec()
+        if self._time_in_state() > limit:
+            self.get_logger().info(f'search timeout ({limit:.0f}s); back to IDLE')
             self._stop()
             self._reset_transient()
             self._set_state(State.IDLE)
@@ -362,6 +393,11 @@ class BrainNode(Node):
                 self.centered_streak = 0
                 self._centered_hold_sec = 0.0
                 self._drive(linear_x=self.corner_exit_speed, angular_z=0.0)
+                if self.simple_mission_flow:
+                    self._log_simple_progress(
+                        f'simple: CORNER_EXIT t={self._time_in_state():.1f}/'
+                        f'{self.corner_exit_forward_sec:.1f}s vx={self.corner_exit_speed:.0f}'
+                    )
                 return
             self.corner_exit_done = True
 
@@ -393,24 +429,23 @@ class BrainNode(Node):
 
         if not self._detection_is_fire():
             self._centered_hold_sec = 0.0
-            self._fire_confirm_accum = 0.0
             if not self._simple_mission_armed:
-                if self._searching_had_alarm:
-                    self._lost_since = None
-                    self._drive(angular_z=self.rot_speed)
-                    return
-                self.get_logger().info('simple: fire lost before arm -> IDLE')
-                self._stop()
-                self._set_state(State.IDLE)
-                return
-            # Armed but lost sight of fire
+                self._fire_confirm_accum = 0.0
             if self._lost_since is None:
                 self._lost_since = now
             lost_elapsed = (now - self._lost_since).nanoseconds / 1e9
             if lost_elapsed < self.lost_fire_grace_sec:
                 self._stop()
+                self._log_simple_progress(
+                    f'simple: LOST_FIRE_GRACE {lost_elapsed:.1f}/{self.lost_fire_grace_sec:.1f}s '
+                    f'armed={self._simple_mission_armed} (confirm resets until reacquire)'
+                )
                 return
             self._drive(angular_z=self.rot_speed)
+            self._log_simple_progress(
+                f'simple: SEEK_SPIN wz={self.rot_speed:.0f} armed={self._simple_mission_armed} '
+                f'fire_confirm={self._fire_confirm_accum:.1f}/{self.simple_fire_confirm_sec:.1f}s'
+            )
             return
 
         # Have fire
@@ -428,13 +463,28 @@ class BrainNode(Node):
             self._centered_hold_sec = 0.0
             offset = float(self.latest_det.x_offset)
             direction = -1.0 if offset > 0 else 1.0
-            self._drive(angular_z=direction * self.rot_speed)
+            side = 'left' if direction > 0 else 'right'
+            wz = direction * self.rot_speed
+            self._drive(angular_z=wz)
+            self._log_simple_progress(
+                f'simple: TRACK_FIRE x_off={offset:+.3f} rotate_{side} wz={wz:.0f} '
+                f'armed={self._simple_mission_armed} '
+                f'confirm={self._fire_confirm_accum:.1f}/{self.simple_fire_confirm_sec:.1f}s'
+            )
             return
 
         self._stop()
         if not self._simple_mission_armed:
+            self._log_simple_progress(
+                f'simple: CENTERED_HOLD confirm={self._fire_confirm_accum:.1f}/'
+                f'{self.simple_fire_confirm_sec:.1f}s (arming, x_offset within deadband)'
+            )
             return
         self._centered_hold_sec += self._brain_dt
+        self._log_simple_progress(
+            f'simple: DWELL_BEFORE_WARN center_hold={self._centered_hold_sec:.1f}/'
+            f'{self.center_hold_before_warning:.1f}s armed=yes'
+        )
         if self._centered_hold_sec >= self.center_hold_before_warning:
             self.get_logger().info(
                 f'center hold {self._centered_hold_sec:.1f}s '

@@ -70,6 +70,9 @@ brain_node:
     simple_fire_confirm_sec: 12.0
     lost_fire_grace_sec: 5.0
     center_hold_before_warning_sec: 15.0
+    # Simple mission SEARCHING cap (0 = max of search_timeout and auto floor ~ confirm+center+graces+120).
+    simple_search_timeout_sec: 0.0
+    simple_progress_log_period_sec: 1.0
 
 # rotation_center_test_node — edit here for quick tuning (host-vision + rotation launch).
 rotation_center_test:

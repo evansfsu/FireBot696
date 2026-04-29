@@ -8,8 +8,10 @@ and forward detections into ROS:
 
 Use this launch for the **simple mission** state machine. It overrides ``brain_node``
 params: 2 s corner-exit forward when entering SEARCHING, 0.5 s stable fire to leave IDLE,
-12 s fire to arm, 5 s grace when lost after arm, 15 s centered (after arm) → WARNING,
-10 s WARNING → extinguish.
+12 s fire to arm, 5 s grace when lost, in-place spin to reacquire, 15 s centered (after arm)
+→ WARNING, 10 s WARNING → extinguish, 300 s SEARCHING cap before timeout to IDLE.
+
+Monitor timers: ``docker compose ... logs -f`` — look for lines prefixed with ``simple:``.
 
 UDP listen port: environment variable ``FIREBOT_UDP_DETECTION_PORT`` (default **7766**).
 
@@ -73,6 +75,8 @@ def generate_launch_description():
                         'center_hold_before_warning_sec': 15.0,
                         'warning_seconds': 10,
                         'corner_exit_forward_sec': 2.0,
+                        'simple_search_timeout_sec': 300.0,
+                        'simple_progress_log_period_sec': 1.0,
                     },
                 ],
                 output='screen',
