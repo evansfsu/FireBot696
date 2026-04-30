@@ -69,21 +69,45 @@ class ArduinoBridgeNode(Node):
         self.ser = None
         # Mega echoes L,warn=N every poll; log only when N changes.
         self._mega_last_warn_payload = None
+        self._serial_retry_s = 2.0
+        self._next_serial_try = 0.0
+        self._serial_fail_count = 0
         if SERIAL_AVAILABLE:
-            try:
-                self.ser = serial.Serial(self.port, self.baud, timeout=0.05)
-                time.sleep(2.0)  # Mega auto-reset settle
-                self.get_logger().info(f'serial opened: {self.port} @ {self.baud}')
-            except serial.SerialException as exc:
-                self.get_logger().warn(f'serial open failed: {exc}')
+            self._try_serial_connect()
         else:
             self.get_logger().warn('pyserial not installed; bridge will run headless')
-
-        self._configure_sensors()
 
         period = 1.0 / max(self.poll_hz, 0.1)
         self.create_timer(period, self._poll)
         self.get_logger().info('arduino_bridge_node up')
+
+    def _try_serial_connect(self) -> bool:
+        """Open serial to Mega. Retries from _poll if device appears late (Docker bind / USB)."""
+        if not SERIAL_AVAILABLE:
+            return False
+        if self.ser is not None and self.ser.is_open:
+            return True
+        if self.ser is not None:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+        try:
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.05)
+            time.sleep(2.0)  # Mega USB reset settle
+            self.get_logger().info(f'serial opened: {self.port} @ {self.baud}')
+            self._serial_fail_count = 0
+            self._configure_sensors()
+            return True
+        except serial.SerialException as exc:
+            self.ser = None
+            self._serial_fail_count += 1
+            if self._serial_fail_count == 1 or self._serial_fail_count % 15 == 0:
+                self.get_logger().warn(
+                    f'serial open failed (attempt {self._serial_fail_count}): {exc}'
+                )
+            return False
 
     def _configure_sensors(self):
         self._send(f'C,US,{int(self.en_us)}')
@@ -115,6 +139,11 @@ class ArduinoBridgeNode(Node):
             self._send('R')
 
     def _poll(self):
+        if SERIAL_AVAILABLE and (self.ser is None or not self.ser.is_open):
+            now = time.monotonic()
+            if now >= self._next_serial_try:
+                self._next_serial_try = now + self._serial_retry_s
+                self._try_serial_connect()
         self._send('S')
         if self.ser is None or not self.ser.is_open:
             return

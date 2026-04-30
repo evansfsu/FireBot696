@@ -8,6 +8,7 @@ services:
     ipc: host
     group_add:
       - video
+      - dialout
     environment:
       - ROS_DOMAIN_ID=0
       # Explicit 0 overrides a host .env or shell export of FIREBOT_OPENCV_ONLY=1.
@@ -36,6 +37,7 @@ services:
     ipc: host
     group_add:
       - video
+      - dialout
     profiles:
       - dev
     environment:

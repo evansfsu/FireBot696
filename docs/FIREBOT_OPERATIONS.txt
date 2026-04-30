@@ -197,6 +197,40 @@ If you need more detail from a specific node, check ROS 2 docs for `--ros-args -
 
 
 ==============================================================================
+6b) EXTINGUISHER / STEPPER TEST (no brain required)
+==============================================================================
+
+**arduino_bridge_node** must be running and serial must work (container needs
+**/dev/ttyACM0** or change **serial_port** in firebot_params.yaml under
+arduino_bridge_node). If logs say "serial open failed":
+
+  • On the **host** run:  ls -l /dev/ttyACM0
+  • **Inside** the container run:  docker compose ... exec firebot ls -l /dev/ttyACM0
+    If the device is missing **inside**, the container was usually created before
+    the Mega enumerated — with the repo compose, do: **docker compose down**,
+    confirm the Mega is plugged in and the host has /dev/ttyACM0, then **up -d**
+    again. Docker binds /dev/ttyACM0 at **container create** time; a stale bind
+    gives errno 6 even when the host later shows the port.
+
+  • With current **arduino_bridge_node**, the bridge **retries** opening serial
+    every ~2 s until it succeeds (helps late USB / hot-plug without restarting).
+
+Phases (see firebot_mega.ino header): **0**=off **1**=pin pull **2**=advance
+(lead screw; runs then holds per firmware) **3**=retract **4**=stop.
+
+Inside container (after sourcing install/setup.bash):
+
+  ros2 run firebot firebot extinguish 1     # pin pull
+  ros2 run firebot firebot extinguish 2     # advance / hold sequence (main stepper motion)
+  ros2 run firebot firebot extinguish 3     # retract
+  ros2 run firebot firebot extinguish 0     # off
+
+Raw pub (same effect):
+
+  ros2 topic pub --once /cmd/extinguisher std_msgs/msg/Int32 "{data: 2}"
+
+
+==============================================================================
 7) QUICK CHECKLIST AFTER A PULL
 ==============================================================================
 

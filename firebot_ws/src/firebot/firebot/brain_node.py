@@ -34,6 +34,8 @@ Extra approach conditions via `approach_strategy`:
 """
 
 from typing import Any, Dict, Iterable, Optional
+
+import rclpy
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from std_msgs.msg import Bool, Int32, String
